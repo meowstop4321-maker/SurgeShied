@@ -213,7 +213,7 @@ app.post("/pubsub/notification-jobs", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🛡️ SurgeShield Worker ${WORKER_ID} listening on ${PORT}`);
   
   // Start WorkerManager autoscaling pool (single source of truth for job execution)
@@ -223,4 +223,12 @@ app.listen(PORT, () => {
   setInterval(() => ghostSeatSweep().catch(console.error), GHOST_SEAT_SWEEP_MS);
   setInterval(() => heartbeat().catch(console.error), HEARTBEAT_MS);
   heartbeat().catch(console.error);
+});
+
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.warn(`[Worker] Port ${PORT} is already in use by an active worker process.`);
+  } else {
+    console.error("[Worker] Server error:", err);
+  }
 });
