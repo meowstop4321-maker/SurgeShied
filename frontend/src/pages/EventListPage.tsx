@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Calendar, Users, ArrowRight, Shield, Layers } from "lucide-react";
+import { Calendar, Users, ArrowRight } from "lucide-react";
 import { listEvents } from "../lib/api";
 
 export const EventListPage: React.FC = () => {
@@ -10,6 +10,7 @@ export const EventListPage: React.FC = () => {
   useEffect(() => {
     listEvents()
       .then(setEvents)
+      .catch((err) => console.warn("Error fetching events:", err))
       .finally(() => setLoading(false));
   }, []);
 
@@ -19,25 +20,18 @@ export const EventListPage: React.FC = () => {
         <div>
           <h1 className="text-3xl font-extrabold text-white">Live Events</h1>
           <p className="text-sm text-slate-400 mt-1">
-            Protected by SurgeShield Adaptive Surge Partitions & Instant Queue Routing
+            Browse upcoming events with instant seat reservations and zero overbooking.
           </p>
         </div>
-        <Link
-          to="/simulate"
-          className="self-start sm:self-auto px-4 py-2 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-semibold flex items-center gap-2 transition-all"
-        >
-          <span>Open Stress Simulator</span>
-          <ArrowRight size={14} />
-        </Link>
       </div>
 
       {loading ? (
-        <div className="text-center py-20 text-slate-400">Loading live events…</div>
+        <div className="text-center py-20 text-slate-400">Loading events…</div>
       ) : events.length === 0 ? (
         <div className="text-center py-20 rounded-2xl border border-white/10 bg-slate-900/40 p-8">
           <Calendar className="w-12 h-12 text-slate-600 mx-auto mb-3" />
-          <h3 className="text-base font-semibold text-white">No active events found</h3>
-          <p className="text-xs text-slate-400 mt-1">Run `seed-demo.sh` to generate high-concurrency demo events.</p>
+          <h3 className="text-base font-semibold text-white">No active events yet</h3>
+          <p className="text-xs text-slate-400 mt-1">Sign in as Organizer to create your first event.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -57,17 +51,13 @@ export const EventListPage: React.FC = () => {
                   >
                     {event.registration_open ? "Registration Open" : "Closed"}
                   </span>
-                  <span className="flex items-center gap-1 text-xs text-slate-400 font-mono">
-                    <Layers size={13} className="text-teal-400" />
-                    <span>{event.lane_count} Lanes</span>
-                  </span>
                 </div>
 
                 <h3 className="text-lg font-bold text-white group-hover:text-teal-300 transition-colors">
                   {event.title}
                 </h3>
                 <p className="text-xs text-slate-400 line-clamp-2 leading-relaxed">
-                  {event.description || "High-concurrency partitioned ticketing demo."}
+                  {event.description || "High-concurrency event registration."}
                 </p>
               </div>
 
@@ -94,7 +84,7 @@ export const EventListPage: React.FC = () => {
                   to={`/events/${event.id}`}
                   className="w-full py-2.5 rounded-xl bg-white/5 hover:bg-teal-500 hover:text-slate-950 text-slate-200 border border-white/10 hover:border-teal-500 font-semibold text-xs flex items-center justify-center gap-2 transition-all"
                 >
-                  <span>Register & View Lanes</span>
+                  <span>View Details & Register</span>
                   <ArrowRight size={14} />
                 </Link>
               </div>

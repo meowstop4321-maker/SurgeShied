@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Plus, Calendar, Users, Layers, ShieldCheck, ToggleLeft, ToggleRight, Loader2 } from "lucide-react";
+import { Plus, Calendar, Users, ShieldCheck, ToggleLeft, ToggleRight, Loader2 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../lib/auth";
 
@@ -13,12 +13,14 @@ export const OrganizerDashboard: React.FC = () => {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [capacity, setCapacity] = useState(500);
-  const [laneCount, setLaneCount] = useState(4);
   const [startsAt, setStartsAt] = useState("");
 
   const loadOrganizerEvents = async () => {
     try {
-      const { data } = await supabase.from("events").select("*").order("created_at", { ascending: false });
+      const { data, error } = await supabase.from("events").select("*").order("created_at", { ascending: false });
+      if (error) {
+        console.warn("Could not load events:", error.message);
+      }
       setEvents(data ?? []);
     } catch (err) {
       console.error(err);
@@ -37,6 +39,7 @@ export const OrganizerDashboard: React.FC = () => {
     setCreating(true);
 
     try {
+      const laneCount = 4; // Automatically partitioned behind the scenes
       const dateVal = startsAt ? new Date(startsAt).toISOString() : new Date(Date.now() + 86400000 * 7).toISOString();
       const { data: newEvent, error: evErr } = await supabase
         .from("events")
@@ -54,7 +57,7 @@ export const OrganizerDashboard: React.FC = () => {
 
       if (evErr) throw evErr;
 
-      // Seed seat partitions
+      // Automatically seed background partitions
       if (newEvent) {
         const laneCap = Math.floor(capacity / laneCount);
         const partitionsToInsert = [];
@@ -81,12 +84,11 @@ export const OrganizerDashboard: React.FC = () => {
         setTitle("");
         setDescription("");
         setCapacity(500);
-        setLaneCount(4);
         setStartsAt("");
         await loadOrganizerEvents();
       }
     } catch (err: any) {
-      alert(err.message || "Failed to create event");
+      alert(err.message || "Failed to create event. (Make sure complete_schema.sql has been executed in Supabase SQL Editor).");
     } finally {
       setCreating(false);
     }
@@ -106,7 +108,7 @@ export const OrganizerDashboard: React.FC = () => {
       <div>
         <h1 className="text-3xl font-extrabold text-white">Organizer Portal</h1>
         <p className="text-sm text-slate-400 mt-1">
-          Create and manage high-volume partitioned events with autonomous resilience monitoring.
+          Create and manage high-volume events with automated zero-overbooking resilience.
         </p>
       </div>
 
@@ -142,31 +144,16 @@ export const OrganizerDashboard: React.FC = () => {
               />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Total Capacity</label>
-                <input
-                  type="number"
-                  required
-                  min={10}
-                  value={capacity}
-                  onChange={(e) => setCapacity(parseInt(e.target.value) || 0)}
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-teal-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">Adaptive Lanes</label>
-                <select
-                  value={laneCount}
-                  onChange={(e) => setLaneCount(parseInt(e.target.value))}
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-teal-500"
-                >
-                  <option value={2}>2 Lanes</option>
-                  <option value={4}>4 Lanes</option>
-                  <option value={8}>8 Lanes</option>
-                  <option value={16}>16 Lanes</option>
-                </select>
-              </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-300 mb-1">Total Capacity (Seats)</label>
+              <input
+                type="number"
+                required
+                min={10}
+                value={capacity}
+                onChange={(e) => setCapacity(parseInt(e.target.value) || 0)}
+                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-teal-500"
+              />
             </div>
 
             <div>
@@ -185,7 +172,7 @@ export const OrganizerDashboard: React.FC = () => {
               className="w-full py-2.5 rounded-lg bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm shadow flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
             >
               {creating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
-              <span>Deploy Partitioned Event</span>
+              <span>Create Event</span>
             </button>
           </form>
         </div>
@@ -208,12 +195,7 @@ export const OrganizerDashboard: React.FC = () => {
                   className="rounded-xl border border-white/10 bg-slate-900/40 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 backdrop-blur-md"
                 >
                   <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-bold text-white">{ev.title}</h3>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 border border-white/10 text-teal-300">
-                        {ev.lane_count} Lanes
-                      </span>
-                    </div>
+                    <h3 className="text-sm font-bold text-white">{ev.title}</h3>
                     <p className="text-xs text-slate-400">
                       Capacity: {ev.capacity} seats · Started {new Date(ev.starts_at || Date.now()).toLocaleDateString()}
                     </p>

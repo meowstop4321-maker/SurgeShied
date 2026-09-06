@@ -9,7 +9,7 @@ interface QRModalProps {
   eventTitle: string;
   startsAt: string;
   ticketToken: string;
-  laneIndex: number;
+  laneIndex?: number;
   userEmail: string;
 }
 
@@ -19,7 +19,6 @@ export const QRModal: React.FC<QRModalProps> = ({
   eventTitle,
   startsAt,
   ticketToken,
-  laneIndex,
   userEmail,
 }) => {
   const [qrUrl, setQrUrl] = useState<string>("");
@@ -41,7 +40,7 @@ export const QRModal: React.FC<QRModalProps> = ({
 
   const calEvent = {
     title: eventTitle,
-    description: `Your SurgeShield ticket is confirmed for lane ${laneIndex}. Token: ${ticketToken}`,
+    description: `Your SurgeShield ticket is confirmed. Token: ${ticketToken}`,
     startsAt: startsAt || new Date().toISOString(),
   };
 
@@ -72,8 +71,8 @@ export const QRModal: React.FC<QRModalProps> = ({
             </div>
           )}
           <div className="mt-2 text-center">
-            <span className="text-[11px] font-mono font-bold text-slate-900 bg-slate-200 px-2 py-0.5 rounded">
-              LANE {laneIndex} · SEAT PASSPORT
+            <span className="text-[11px] font-mono font-bold text-slate-900 bg-slate-200 px-3 py-1 rounded">
+              SEAT PASSPORT · VERIFIED
             </span>
           </div>
         </div>
