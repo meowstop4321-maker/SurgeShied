@@ -43,6 +43,10 @@ ALTER TABLE public.notification_jobs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "notification_jobs_all" ON public.notification_jobs;
 CREATE POLICY "notification_jobs_all" ON public.notification_jobs FOR ALL USING (true) WITH CHECK (true);
 
+ALTER TABLE public.job_queue ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "job_queue_all" ON public.job_queue;
+CREATE POLICY "job_queue_all" ON public.job_queue FOR ALL USING (true) WITH CHECK (true);
+
 -- Reload PostgREST schema cache immediately
 NOTIFY pgrst, 'reload schema';
 NOTIFY pgrst, 'reload config';

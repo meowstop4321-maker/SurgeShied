@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { createHmac } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { WorkerManager } from "./workerManager.js";
 
 // Auto-load .env from worker/.env or parent .env if not already loaded into process.env
 const envPaths = [
@@ -222,11 +223,64 @@ async function heartbeat() {
   await admin.rpc("upsert_worker_heartbeat", { p_worker_id: WORKER_ID, p_status: "healthy" });
 }
 
+// Initialize WorkerManager for dynamic autoscaling queue processing
+const workerManager = new WorkerManager({
+  supabaseUrl: SUPABASE_URL,
+  serviceRoleKey: SERVICE_ROLE_KEY,
+  resendApiKey: RESEND_API_KEY,
+  resendFrom: RESEND_FROM,
+  passportSecret: SEAT_PASSPORT_SECRET,
+  passportTtlSeconds: PASSPORT_TTL_SECONDS,
+  minWorkers: 1,
+  maxWorkers: 10,
+  jobsPerWorker: 3,
+});
+
 // --- HTTP server ---------------------------------------------------------
 const app = express();
 app.use(express.json());
 
 app.get("/health", (_req, res) => res.status(200).json({ status: "ok", worker_id: WORKER_ID }));
+
+// Worker Manager Stats and Scaling Metrics
+app.get("/manager/stats", (_req, res) => {
+  res.status(200).json(workerManager.getStats());
+});
+
+app.get("/jobs/status", async (_req, res) => {
+  try {
+    const depth = await workerManager.fetchQueueDepth();
+    res.status(200).json({ status: "ok", depth, stats: workerManager.getStats() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/jobs/enqueue", async (req, res) => {
+  try {
+    const { job_type, payload, priority, scheduled_at } = req.body;
+    if (!job_type) {
+      return res.status(400).json({ error: "job_type is required" });
+    }
+    const jobId = await workerManager.enqueue(
+      job_type,
+      payload || {},
+      priority ?? 5,
+      scheduled_at || new Date().toISOString()
+    );
+    res.status(201).json({ status: "enqueued", job_id: jobId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/manager/scale", (req, res) => {
+  const { minWorkers, maxWorkers } = req.body;
+  if (typeof minWorkers === "number") workerManager.minWorkers = Math.max(1, minWorkers);
+  if (typeof maxWorkers === "number") workerManager.maxWorkers = Math.max(workerManager.minWorkers, maxWorkers);
+  workerManager.evaluateAndScale().catch(console.error);
+  res.status(200).json({ status: "ok", config: { minWorkers: workerManager.minWorkers, maxWorkers: workerManager.maxWorkers } });
+});
 
 app.post("/pubsub/notification-jobs", async (req, res) => {
   if (PUBSUB_PUSH_TOKEN && req.query.token !== PUBSUB_PUSH_TOKEN) {
@@ -247,6 +301,10 @@ app.post("/pubsub/notification-jobs", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`surgeshield worker ${WORKER_ID} listening on ${PORT}`);
+  
+  // Start WorkerManager autoscaling pool
+  workerManager.start();
+
   setInterval(() => ghostSeatSweep().catch(console.error), GHOST_SEAT_SWEEP_MS);
   setInterval(() => selfHealSweep().catch(console.error), SELF_HEAL_SWEEP_MS);
   setInterval(() => heartbeat().catch(console.error), HEARTBEAT_MS);
