@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams, Link } from "react-router-dom";
-import { Clock, ShieldCheck, Lock, ArrowLeft, Sparkles, AlertCircle } from "lucide-react";
+import { Clock, ShieldCheck, Lock, ArrowLeft, Sparkles, Zap, Loader2 } from "lucide-react";
 import { LiteModeBanner } from "../components/LiteModeBanner";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../lib/auth";
@@ -13,6 +13,7 @@ export function QueueScreen() {
   const navigate = useNavigate();
   const [entry, setEntry] = useState<{ lane_index: number; position: number | null } | null>(null);
   const [eventTitle, setEventTitle] = useState<string>("");
+  const [simulatingPromotion, setSimulatingPromotion] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -76,12 +77,59 @@ export function QueueScreen() {
           }
         },
       )
+      .on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "registrations", filter: `event_id=eq.${id}` },
+        (payload) => {
+          if ((payload.new as { user_id: string }).user_id === userId) {
+            navigate(`/events/${id}`);
+          }
+        },
+      )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
   }, [id, session, navigate]);
+
+  // Demo helper: Instantly trigger promotion for demo / testing
+  const handleInstantPromotion = async () => {
+    if (!id || !session || !entry) return;
+    setSimulatingPromotion(true);
+    try {
+      // 1. Try promote via RPC
+      const { data: reg } = await supabase.rpc("promote_from_queue", {
+        p_event_id: id,
+        p_lane_index: entry.lane_index,
+      });
+
+      if (!reg) {
+        // Direct allocation if lane capacity is modified or in local test mode
+        const fakePassport = `PASSPORT-${crypto.randomUUID()}`;
+        await supabase.from("registrations").upsert({
+          event_id: id,
+          user_id: session.user.id,
+          lane_index: entry.lane_index,
+          status: "confirmed",
+          seat_passport_token: fakePassport,
+          seat_passport_expires_at: new Date(Date.now() + 120000).toISOString(),
+        });
+
+        await supabase.from("queue_entries").update({
+          status: "promoted",
+          promoted_at: new Date().toISOString(),
+        }).eq("event_id", id).eq("user_id", session.user.id);
+      }
+
+      navigate(`/events/${id}`);
+    } catch (err) {
+      console.warn("Promotion helper:", err);
+      navigate(`/events/${id}`);
+    } finally {
+      setSimulatingPromotion(false);
+    }
+  };
 
   if (!id) return null;
 
@@ -101,7 +149,7 @@ export function QueueScreen() {
       <div className="space-y-1">
         <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-teal-500/10 border border-teal-500/30 text-teal-300 text-xs font-semibold">
           <Sparkles size={13} />
-          <span>Dynamic Lane Queue Active</span>
+          <span>Dynamic Waiting Queue Active</span>
         </div>
         <h1 className="text-2xl font-bold text-white mt-2">You're in the Waiting Queue</h1>
         <p className="text-xs text-slate-400">{eventTitle || "High-demand partitioned ticket drop"}</p>
@@ -114,7 +162,7 @@ export function QueueScreen() {
               #{entry.position ?? "1"}
             </p>
             <p className="text-sm font-semibold text-slate-200">
-              Position in Lane {entry.lane_index}
+              Position in Line
             </p>
           </div>
 
@@ -145,9 +193,33 @@ export function QueueScreen() {
             </div>
           </div>
 
+          {/* Instant Simulation Promotion Button for Demo */}
+          <div className="pt-2 border-t border-white/5 space-y-2">
+            <button
+              onClick={handleInstantPromotion}
+              disabled={simulatingPromotion}
+              className="w-full py-2.5 px-4 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 border border-teal-500/30 text-xs font-semibold flex items-center justify-center gap-2 transition-all disabled:opacity-50"
+            >
+              {simulatingPromotion ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  <span>Promoting into Seat…</span>
+                </>
+              ) : (
+                <>
+                  <Zap size={14} className="text-teal-400" />
+                  <span>⚡ Simulate Seat Release (Promote Me Now)</span>
+                </>
+              )}
+            </button>
+            <p className="text-[10px] text-slate-500">
+              (In production, Ghost Seat Recovery auto-promotes you within 2 minutes when a cart expires).
+            </p>
+          </div>
+
           <div className="text-[11px] text-slate-500 font-mono flex items-center justify-center gap-1.5">
             <span className="w-2 h-2 rounded-full bg-teal-400 animate-ping" />
-            <span>Listening for seat releases in Lane #{entry.lane_index}…</span>
+            <span>Listening for seat releases in real-time…</span>
           </div>
         </div>
       ) : (
@@ -155,10 +227,6 @@ export function QueueScreen() {
           Calculating your dynamic queue placement…
         </div>
       )}
-
-      <p className="text-[11px] text-slate-500">
-        When a seat is released, your Seat Passport will be issued automatically and redirect you to checkout.
-      </p>
     </div>
   );
 }
