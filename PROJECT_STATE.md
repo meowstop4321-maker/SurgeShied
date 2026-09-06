@@ -39,24 +39,23 @@ Simulation Panel → simulate (edge fn, service role, DEMO_MODE-gated) ──┐
          │     └─ full? try next-healthiest lane
          │     └─ unique violation (23505)? → "already_registered", stop
          │     └─ all full? → queue_entries (Parallel Waiting Queue)
-         ├─ issue Seat Passport (HMAC, 10 min TTL)
-         ├─ insert notification_jobs (status=queued)
+         ├─ issue Seat Passport (HMAC, 2-min TTL, max 6 min extension)
+         ├─ enqueue_job() → job_queue (status=pending, priority 1-10)
          ├─ publishBestEffort() → Pub/Sub (wake-up hint only)
          └─ set_system_status() → system_status table (drives Lite Mode banner)
 
-Worker (Node, Cloud Run) — 3 independent loops:
-  - ghostSeatSweep()  45s → release_expired_seats() → promote_from_queue()
-                          → finishPromotions() (issues passport+job for
-                            registrations promote_from_queue created directly —
-                            see "Fixed this turn" below)
-  - selfHealSweep()   20s → any notification_jobs stuck 'queued' past
-                            next_retry_at gets processed (missed-push fallback)
-  - heartbeat()       20s → upsert_worker_heartbeat()
+Worker (Node, Cloud Run / AWS ECS) — Unified WorkerManager Engine:
+  - Dynamic In-Process Autoscaling: scales 1 to 10 concurrent async workers based on job_queue depth & priority pressure.
+  - Priority-Aware Atomic Claims: claim_job_batch() via SELECT ... FOR UPDATE SKIP LOCKED.
+  - Periodic Sweeps & Recovery:
+      - ghostSeatSweep() (20s) → release_expired_seats() → promotes waiting attendees & enqueues Priority 8 confirmation notifications
+      - heartbeat() (20s) → upsert_worker_heartbeat()
+  - Circuit Guardian Breaker: Opens after 3 consecutive Resend failures, auto-cooldown after 30s.
+  - Multi-tier Autoscaling Model:
+      1. Vertical / In-Process Autoscale: WorkerManager scales async worker threads dynamically inside the Node process.
+      2. Horizontal Container Autoscale: Cloud Run / AWS ECS provisions container instances based on CPU / request concurrency triggers.
 
-Pub/Sub push → POST /pubsub/notification-jobs?token=... → processJob()
-  → Resend REST → success: sent / failure: backoff, 5 attempts, then
-    dead_letter. Circuit Guardian opens after 3 consecutive failures,
-    closes on next success, audited both ways.
+Pub/Sub push → POST /pubsub/notification-jobs?token=... → WorkerManager.enqueue() (Priority 8)
 
 Operations Dashboard polls get_ops_metrics(event_id) every 3s + Trust Card +
 Lite Mode banner + embedded Simulation Panel. Same panel also stands alone

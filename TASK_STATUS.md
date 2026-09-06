@@ -27,6 +27,9 @@ Legend: [x] done  [~] in progress  [ ] not started  [!] blocked
 23. [x] Presentation (2-min pitch, 5-min live demo walkthrough, Judge Q&A cheat sheet)
 24. [x] Deploy scripts (setup-gcp.sh, deploy-worker.sh, setup-pubsub.sh, deploy-supabase.sh, deploy-vercel.sh, seed-demo.sh, verify.sh)
 25. [ ] Live Cloud Execution (Awaiting user cloud credentials for live deploy run)
+30. [x] Priority Job Queue Migration (`0008_job_queue.sql`, `claim_job_batch` SKIP LOCKED RPC, DLQ)
+31. [x] Dynamic Autoscaling WorkerManager (`worker/workerManager.js`, priority queues, 1-10 scaling)
+32. [x] Automated Worker Autoscaling Test Suite (`scripts/test-worker-scaling.js`, 8/8 pass)
 
 ## Added mid-build
 26. [x] Tamper-Evident Audit Chain (SHA-256 hash chaining on audit_logs)
