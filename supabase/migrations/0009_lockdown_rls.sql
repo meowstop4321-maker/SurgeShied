@@ -88,7 +88,9 @@ DROP POLICY IF EXISTS "circuit_guardian_state: all allowed" ON public.circuit_gu
 CREATE POLICY "circuit_guardian_state: all allowed" ON public.circuit_guardian_state
   FOR ALL USING (true) WITH CHECK (true);
 
--- 7. Ensure all core RPC functions are SECURITY DEFINER with search_path = public
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- 7. Ensure all core RPC functions are SECURITY DEFINER with search_path = public, extensions
 
 -- append_audit_log: Cryptographic hash chain append
 CREATE OR REPLACE FUNCTION public.append_audit_log(
@@ -100,7 +102,7 @@ CREATE OR REPLACE FUNCTION public.append_audit_log(
 ) RETURNS public.audit_logs
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public
+SET search_path = public, extensions
 AS $$
 DECLARE
   v_prev_hash text;
@@ -115,8 +117,8 @@ BEGIN
 
   v_new_hash := encode(
     digest(
-      concat_ws('|', v_prev_hash, v_created_at::text, p_action, COALESCE(p_actor_id::text, ''), COALESCE(p_metadata::text, '{}')),
-      'sha256'
+      concat_ws('|', v_prev_hash, v_created_at::text, p_action, COALESCE(p_actor_id::text, ''), COALESCE(p_metadata::text, '{}'))::bytea,
+      'sha256'::text
     ),
     'hex'
   );
