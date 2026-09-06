@@ -4,6 +4,7 @@ import { getOpsMetrics, listEvents } from "../lib/api";
 import { LiteModeBanner } from "../components/LiteModeBanner";
 import { MetricTile } from "../components/OperationsDashboard/MetricTile";
 import { SurgeGauge } from "../components/OperationsDashboard/SurgeGauge";
+import { PartitionBoard } from "../components/OperationsDashboard/PartitionBoard";
 import { TrustCard } from "../components/TrustCard";
 import { SimulationPanel } from "../components/SimulationPanel";
 import { LogExplainerCard } from "../components/LogExplainerCard";
@@ -20,6 +21,7 @@ export function OperationsDashboard() {
   const [events, setEvents] = useState<{ id: string; title: string }[]>([]);
   const [eventId, setEventId] = useState<string | null>(null);
   const [metrics, setMetrics] = useState<Awaited<ReturnType<typeof getOpsMetrics>> | null>(null);
+  const [queueHistory, setQueueHistory] = useState<number[]>([]);
 
   useEffect(() => {
     listEvents().then((data) => {
@@ -34,7 +36,10 @@ export function OperationsDashboard() {
     async function tick() {
       try {
         const m = await getOpsMetrics(eventId!);
-        if (!cancelled) setMetrics(m);
+        if (!cancelled) {
+          setMetrics(m);
+          setQueueHistory((h) => [...h.slice(-29), m.queue_length]);
+        }
       } catch (err) {
         console.error(err);
       }
@@ -85,7 +90,28 @@ export function OperationsDashboard() {
             <MetricTile label="Requests/sec" value={metrics.requests_per_sec.toFixed(1)} />
             <MetricTile
               label="Queue length"
-              value={metrics.queue_length}
+              value={
+                <div className="flex items-baseline justify-between gap-3">
+                  <span>{metrics.queue_length}</span>
+                  {queueHistory.length > 1 && (
+                    <div className="flex items-end gap-0.5 h-6 w-20">
+                      {queueHistory.map((val, idx) => {
+                        const max = Math.max(...queueHistory, 1);
+                        const heightPct = Math.max(15, Math.round((val / max) * 100));
+                        return (
+                          <div
+                            key={idx}
+                            className={`flex-1 rounded-t transition-all duration-300 ${
+                              val > 20 ? "bg-amber-400/80" : val > 0 ? "bg-teal-400/70" : "bg-white/10"
+                            }`}
+                            style={{ height: `${heightPct}%` }}
+                          />
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              }
               accent={metrics.queue_length > 20 ? "amber" : "default"}
             />
             <MetricTile label="Active lanes" value={`${metrics.active_lanes} / ${metrics.total_lanes}`} />
@@ -127,6 +153,8 @@ export function OperationsDashboard() {
           </div>
 
           <TrustCard />
+
+          {eventId && <PartitionBoard eventId={eventId} />}
 
           {eventId && <LogExplainerCard eventId={eventId} />}
 
