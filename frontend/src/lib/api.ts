@@ -117,26 +117,44 @@ async function fallbackSimulate(action: string, eventId?: string, count: number 
       const { data: lanes } = await supabase.from("seat_partitions").select("*").eq("event_id", eventId);
       if (!lanes || lanes.length === 0) throw new Error("No lanes found");
 
-      // Increment partitions directly to simulate parallel traffic surge
-      const perLane = Math.ceil(targetCount / lanes.length);
+      // Calculate true available headroom across all lanes
+      const totalCapacity = lanes.reduce((sum, l) => sum + l.capacity, 0);
+      const currentTaken = lanes.reduce((sum, l) => sum + l.seats_taken, 0);
+      const availableHeadroom = Math.max(0, totalCapacity - currentTaken);
+
+      const actualConfirmed = Math.min(targetCount, availableHeadroom);
+      const actualQueued = Math.max(0, targetCount - actualConfirmed);
+
+      // Allocate actualConfirmed across lanes proportionally
+      let remainingToAllocate = actualConfirmed;
       for (const lane of lanes) {
-        const newTaken = Math.min(lane.capacity, lane.seats_taken + perLane);
-        await supabase.from("seat_partitions").update({ seats_taken: newTaken }).eq("id", lane.id);
+        const laneHeadroom = Math.max(0, lane.capacity - lane.seats_taken);
+        const allocateForLane = Math.min(laneHeadroom, Math.ceil(remainingToAllocate / lanes.length));
+        if (allocateForLane > 0) {
+          await supabase.from("seat_partitions").update({ seats_taken: lane.seats_taken + allocateForLane }).eq("id", lane.id);
+          remainingToAllocate -= allocateForLane;
+        }
       }
+
+      const newTotalTaken = currentTaken + actualConfirmed;
+      const saturationRatio = totalCapacity > 0 ? newTotalTaken / totalCapacity : 1.0;
+      const shouldTriggerLite = saturationRatio > 0.85 || actualQueued > 10;
 
       await supabase.rpc("set_system_status", {
         p_event_id: eventId,
-        p_lite_mode: true,
-        p_reason: `Simulated surge: +${targetCount} concurrent bookings across ${lanes.length} lanes`,
-        p_surge_score: 0.92,
+        p_lite_mode: shouldTriggerLite,
+        p_reason: shouldTriggerLite
+          ? `Simulated surge: ${(saturationRatio * 100).toFixed(0)}% saturation, ${actualQueued} attendees queued`
+          : null,
+        p_surge_score: saturationRatio,
       });
 
       return {
         status: "ok",
         action,
         attempted: targetCount,
-        confirmed: Math.round(targetCount * 0.85),
-        queued: Math.round(targetCount * 0.15),
+        confirmed: actualConfirmed,
+        queued: actualQueued,
         already_registered: 0,
         error: 0,
       };
@@ -162,14 +180,21 @@ async function fallbackSimulate(action: string, eventId?: string, count: number 
     case "recover_system": {
       await supabase.rpc("set_circuit_guardian_state", { p_state: "closed", p_reason: "Recovered" });
       if (eventId) {
+        // Reset partition seats for fresh testing
+        const { data: lanes } = await supabase.from("seat_partitions").select("*").eq("event_id", eventId);
+        if (lanes) {
+          for (const lane of lanes) {
+            await supabase.from("seat_partitions").update({ seats_taken: 0 }).eq("id", lane.id);
+          }
+        }
         await supabase.rpc("set_system_status", {
           p_event_id: eventId,
           p_lite_mode: false,
           p_reason: null,
-          p_surge_score: 0.1,
+          p_surge_score: 0.0,
         });
       }
-      return { status: "ok", action };
+      return { status: "ok", action, message: "System recovered: partition seats reset to 0 and circuit closed." };
     }
 
     default:
