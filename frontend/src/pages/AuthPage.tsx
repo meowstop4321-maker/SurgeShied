@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Mail, Lock, User, ArrowRight, AlertCircle } from "lucide-react";
+import { Shield, Mail, Lock, User, ArrowRight, AlertCircle, Sparkles } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 export const AuthPage: React.FC = () => {
@@ -48,6 +48,45 @@ export const AuthPage: React.FC = () => {
     }
   };
 
+  // One-click demo sign-in helper
+  const handleQuickDemo = async (demoRole: "organizer" | "attendee") => {
+    setLoading(true);
+    setError(null);
+    const demoEmail = demoRole === "organizer" ? "demo.organizer@surgeshield.dev" : "demo.attendee@surgeshield.dev";
+    const demoPass = "SurgeShield2026!Demo";
+
+    try {
+      const { data, error: signInErr } = await supabase.auth.signInWithPassword({
+        email: demoEmail,
+        password: demoPass,
+      });
+
+      if (signInErr) {
+        // If demo user doesn't exist yet, auto sign-up
+        const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+          email: demoEmail,
+          password: demoPass,
+          options: {
+            data: { full_name: demoRole === "organizer" ? "Demo Organizer" : "Demo Attendee", role: demoRole },
+          },
+        });
+        if (signUpErr) throw signUpErr;
+        if (signUpData.user) {
+          navigate(demoRole === "organizer" ? "/organizer" : "/events");
+          return;
+        }
+      }
+
+      if (data?.user) {
+        navigate(demoRole === "organizer" ? "/organizer" : "/events");
+      }
+    } catch (err: any) {
+      setError(err.message || "Demo sign-in failed. You can create an account using the form below.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="max-w-md mx-auto px-4 py-16">
       <div className="rounded-2xl border border-white/10 bg-slate-900/60 backdrop-blur-xl p-8 shadow-2xl space-y-6">
@@ -61,6 +100,39 @@ export const AuthPage: React.FC = () => {
           <p className="text-xs text-slate-400">
             {isSignUp ? "Join as an attendee or organizer" : "Access your registrations and operations"}
           </p>
+        </div>
+
+        {/* 1-Click Quick Demo Sign-In Buttons */}
+        <div className="bg-white/5 border border-white/10 rounded-xl p-3.5 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold text-slate-300 flex items-center gap-1">
+              <Sparkles size={12} className="text-teal-400" />
+              <span>Instant Demo Logins (Hackathon Mode)</span>
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => handleQuickDemo("attendee")}
+              className="py-2 px-3 rounded-lg text-xs font-semibold bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 border border-teal-500/30 transition-all text-center disabled:opacity-50"
+            >
+              Demo Attendee
+            </button>
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => handleQuickDemo("organizer")}
+              className="py-2 px-3 rounded-lg text-xs font-semibold bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 transition-all text-center disabled:opacity-50"
+            >
+              Demo Organizer
+            </button>
+          </div>
+        </div>
+
+        <div className="relative flex items-center justify-center">
+          <div className="border-t border-white/10 w-full" />
+          <span className="bg-slate-900 px-3 text-[11px] uppercase tracking-wider text-slate-500 font-mono">or standard login</span>
         </div>
 
         {error && (
