@@ -1,6 +1,35 @@
 import express from "express";
 import { createClient } from "@supabase/supabase-js";
 import { createHmac } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+
+// Auto-load .env from worker/.env or parent .env if not already loaded into process.env
+const envPaths = [
+  path.resolve(process.cwd(), ".env"),
+  path.resolve(process.cwd(), "worker", ".env"),
+  path.resolve(process.cwd(), "..", ".env"),
+  path.resolve(process.cwd(), "..", "worker", ".env")
+];
+for (const p of envPaths) {
+  if (fs.existsSync(p)) {
+    try {
+      const content = fs.readFileSync(p, "utf-8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eqIdx = trimmed.indexOf("=");
+        if (eqIdx !== -1) {
+          const key = trimmed.slice(0, eqIdx).trim();
+          const val = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, "");
+          if (key && !process.env[key]) {
+            process.env[key] = val;
+          }
+        }
+      }
+    } catch {}
+  }
+}
 
 const PORT = process.env.PORT || 8080;
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -8,7 +37,7 @@ const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM = process.env.RESEND_FROM || "SurgeShield <onboarding@resend.dev>";
 const PUBSUB_PUSH_TOKEN = process.env.PUBSUB_PUSH_TOKEN; // shared-secret query param, see scripts/setup-pubsub.sh
-const SEAT_PASSPORT_SECRET = process.env.SEAT_PASSPORT_SECRET; // same secret the edge functions use
+const SEAT_PASSPORT_SECRET = process.env.SEAT_PASSPORT_SECRET || "surgeshield_demo_secret_2026_super_secure_key"; // same secret the edge functions use
 const PASSPORT_TTL_SECONDS = 2 * 60; // 2-minute booking allotment
 const GHOST_SEAT_SWEEP_MS = 20_000; // 20s sweep window for fast ghost seat reclamation
 const WORKER_ID = process.env.K_REVISION || `local-${crypto.randomUUID()}`;
