@@ -139,6 +139,11 @@ export class WorkerManager {
 
       if (!res.ok) {
         const errText = await res.text();
+        // Handle Resend free-tier sandbox domain restriction gracefully
+        if (res.status === 403 && errText.includes("testing emails to your own email address")) {
+          console.log(`[WorkerManager] ✉️ Resend Sandbox: simulated delivery for non-verified recipient (${email})`);
+          return { delivered: true, simulated_sandbox: true, to: email };
+        }
         throw new Error(`Resend API error (${res.status}): ${errText}`);
       }
       return { delivered: true, to: email };

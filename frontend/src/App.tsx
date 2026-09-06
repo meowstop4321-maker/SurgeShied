@@ -14,7 +14,7 @@ import { SimulationPage } from "./pages/SimulationPage";
 export function App() {
   return (
     <AuthProvider>
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <div className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col selection:bg-teal-500/30 selection:text-teal-200">
           <Navbar />
           <main className="flex-1">

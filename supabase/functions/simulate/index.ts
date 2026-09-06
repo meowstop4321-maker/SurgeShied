@@ -32,8 +32,17 @@ const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const DEMO_MODE = Deno.env.get("DEMO_MODE") === "true";
 const BATCH_SIZE = 50;
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, idempotency-key",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
 function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
 }
 
 async function runLoad(admin: ReturnType<typeof createClient>, eventId: string, count: number) {
@@ -65,6 +74,10 @@ async function runLoad(admin: ReturnType<typeof createClient>, eventId: string, 
 }
 
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   if (req.method !== "POST") return json({ status: "error", message: "POST only" }, 405);
   if (!DEMO_MODE) {
     return json({ status: "error", message: "simulate endpoint is disabled — set DEMO_MODE=true for this deployment to enable it" }, 403);

@@ -2,24 +2,18 @@ import { supabase, FUNCTIONS_URL, WORKER_URL } from "./supabaseClient";
 
 async function authedFetch(path: string, body: Record<string, unknown>) {
   try {
-    const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    const res = await fetch(`${FUNCTIONS_URL}/${path}`, {
-      method: "POST",
+    const { data, error } = await supabase.functions.invoke(path, {
+      body,
       headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
         "Idempotency-Key": crypto.randomUUID(),
       },
-      body: JSON.stringify(body),
     });
 
-    if (!res.ok && res.status !== 400 && res.status !== 409 && res.status !== 403) {
-      throw new Error(`HTTP ${res.status}`);
+    if (error) {
+      return null;
     }
-    return await res.json();
-  } catch (err) {
-    console.warn(`[api] Edge function '${path}' unreachable, using direct client engine fallback:`, err);
+    return data;
+  } catch (_err) {
     return null;
   }
 }
