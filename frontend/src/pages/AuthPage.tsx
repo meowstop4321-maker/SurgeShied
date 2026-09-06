@@ -48,12 +48,17 @@ export const AuthPage: React.FC = () => {
     }
   };
 
-  // One-click demo sign-in helper
+  // One-click demo sign-in helper with standard Gmail addresses
   const handleQuickDemo = async (demoRole: "organizer" | "attendee") => {
     setLoading(true);
     setError(null);
-    const demoEmail = demoRole === "organizer" ? "demo.organizer@surgeshield.dev" : "demo.attendee@surgeshield.dev";
+    const demoEmail = demoRole === "organizer" ? "demo.organizer.surge@gmail.com" : "demo.attendee.surge@gmail.com";
     const demoPass = "SurgeShield2026!Demo";
+
+    setEmail(demoEmail);
+    setPassword(demoPass);
+    setFullName(demoRole === "organizer" ? "Demo Organizer" : "Demo Attendee");
+    setRole(demoRole);
 
     try {
       const { data, error: signInErr } = await supabase.auth.signInWithPassword({
@@ -81,7 +86,7 @@ export const AuthPage: React.FC = () => {
         navigate(demoRole === "organizer" ? "/organizer" : "/events");
       }
     } catch (err: any) {
-      setError(err.message || "Demo sign-in failed. You can create an account using the form below.");
+      setError(err.message || "Demo sign-in failed. Please check credentials or sign up below.");
     } finally {
       setLoading(false);
     }
