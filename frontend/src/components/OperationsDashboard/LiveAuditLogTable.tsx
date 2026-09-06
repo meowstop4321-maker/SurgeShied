@@ -118,6 +118,7 @@ export function LiveAuditLogTable({ eventId }: { eventId?: string }) {
               <th className="py-2.5 px-3">Timestamp</th>
               <th className="py-2.5 px-3">Action</th>
               <th className="py-2.5 px-3">Entity</th>
+              <th className="py-2.5 px-3">Lane & Ingress Details</th>
               <th className="py-2.5 px-3">SHA-256 Chained Hash</th>
               <th className="py-2.5 px-3 text-right">Integrity</th>
             </tr>
@@ -125,7 +126,7 @@ export function LiveAuditLogTable({ eventId }: { eventId?: string }) {
           <tbody className="divide-y divide-white/5 font-mono">
             {filteredLogs.length === 0 ? (
               <tr>
-                <td colSpan={6} className="py-8 text-center text-slate-500">
+                <td colSpan={7} className="py-8 text-center text-slate-500">
                   {loading ? "Streaming live ledger records…" : "No matching audit records found."}
                 </td>
               </tr>
@@ -136,6 +137,17 @@ export function LiveAuditLogTable({ eventId }: { eventId?: string }) {
                   text: "text-slate-300",
                   label: log.action,
                 };
+                const meta = log.metadata || {};
+                const laneInfo = meta.candidate_lane !== undefined
+                  ? `Lane ${meta.candidate_lane} (${meta.headroom ?? 0} headroom)`
+                  : meta.lane_index !== undefined
+                  ? `Lane ${meta.lane_index}`
+                  : meta.capacity
+                  ? `${meta.capacity} cap / ${meta.lane_count} lanes`
+                  : log.actor_id
+                  ? `Actor: ${log.actor_id.slice(0, 8)}…`
+                  : "system root";
+
                 return (
                   <tr key={log.id} className="hover:bg-white/[0.02] transition-colors">
                     <td className="py-2 px-3 font-semibold text-teal-300">#{log.seq}</td>
@@ -148,10 +160,15 @@ export function LiveAuditLogTable({ eventId }: { eventId?: string }) {
                       </span>
                     </td>
                     <td className="py-2 px-3 text-slate-400 text-[11px]">{log.entity}</td>
+                    <td className="py-2 px-3 text-[11px]">
+                      <span className="text-slate-300 bg-white/5 px-2 py-0.5 rounded border border-white/5">
+                        {laneInfo}
+                      </span>
+                    </td>
                     <td className="py-2 px-3 text-slate-400 text-[11px]">
-                      <span className="text-teal-400/90">{log.current_hash ? log.current_hash.slice(0, 14) : "GENESIS"}</span>
-                      <span className="text-slate-600">...</span>
-                      <span className="text-slate-500">{log.current_hash ? log.current_hash.slice(-6) : ""}</span>
+                      <span className="text-teal-400/90">{log.current_hash ? log.current_hash.slice(0, 12) : "GENESIS"}</span>
+                      <span className="text-slate-600">…</span>
+                      <span className="text-slate-500">{log.current_hash ? log.current_hash.slice(-4) : ""}</span>
                     </td>
                     <td className="py-2 px-3 text-right">
                       <span className="inline-flex items-center gap-1 text-[10px] text-emerald-400">
