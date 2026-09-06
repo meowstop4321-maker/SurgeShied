@@ -3,6 +3,7 @@ import React from "react";
 interface MetricTileProps {
   label: string;
   value: React.ReactNode;
+  icon?: React.ReactNode;
   sub?: string;
   accent?: "default" | "amber" | "rose" | "teal";
 }
@@ -14,10 +15,13 @@ const accentStyles = {
   teal: "border-teal-500/30 bg-teal-950/20 text-teal-300",
 };
 
-export const MetricTile: React.FC<MetricTileProps> = ({ label, value, sub, accent = "default" }) => {
+export const MetricTile: React.FC<MetricTileProps> = ({ label, value, icon, sub, accent = "default" }) => {
   return (
     <div className={`rounded-xl border p-4 backdrop-blur-md transition-all ${accentStyles[accent]}`}>
-      <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">{label}</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">{label}</p>
+        {icon && <span className="text-slate-400">{icon}</span>}
+      </div>
       <div className="text-2xl font-bold mt-1 tracking-tight">{value}</div>
       {sub && <p className="text-xs text-slate-500 mt-1">{sub}</p>}
     </div>

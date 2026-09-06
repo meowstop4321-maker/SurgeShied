@@ -1,4 +1,4 @@
-import { supabase, FUNCTIONS_URL } from "./supabaseClient";
+import { supabase, FUNCTIONS_URL, WORKER_URL } from "./supabaseClient";
 
 async function authedFetch(path: string, body: Record<string, unknown>) {
   try {
@@ -221,6 +221,27 @@ export async function getOpsMetrics(eventId: string) {
       active_worker_count: 1,
     };
   }
+}
+
+export interface WorkerMetrics {
+  queue_length: number;
+  active_workers: number;
+  processing_rate: number;
+  avg_latency_ms: number;
+  failed_jobs: number;
+  status: "Healthy" | "High Load" | "Recovering";
+  target_workers: number;
+  observed_at: string;
+}
+
+export async function getWorkerMetrics(): Promise<WorkerMetrics> {
+  if (!WORKER_URL) throw new Error("VITE_WORKER_URL is not configured");
+  const { data } = await supabase.auth.getSession();
+  const response = await fetch(`${WORKER_URL.replace(/\/$/, "")}/api/ops/metrics`, {
+    headers: data.session?.access_token ? { Authorization: `Bearer ${data.session.access_token}` } : undefined,
+  });
+  if (!response.ok) throw new Error(`Worker metrics unavailable (HTTP ${response.status})`);
+  return response.json() as Promise<WorkerMetrics>;
 }
 
 export function subscribeSystemStatus(eventId: string, onChange: (litemode: boolean, reason: string | null) => void) {
