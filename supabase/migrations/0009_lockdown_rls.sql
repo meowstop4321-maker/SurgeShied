@@ -374,6 +374,50 @@ BEGIN
 END;
 $$;
 
+-- create_event_with_partitions: Atomic event creation + partition seeding + audit log
+CREATE OR REPLACE FUNCTION public.create_event_with_partitions(
+  p_title text,
+  p_description text,
+  p_capacity integer,
+  p_lane_count integer,
+  p_starts_at timestamptz
+) RETURNS public.events
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_event public.events%ROWTYPE;
+  v_lane_cap integer;
+  v_i integer;
+BEGIN
+  IF v_user_id IS NULL THEN
+    SELECT id INTO v_user_id FROM public.profiles LIMIT 1;
+  END IF;
+
+  INSERT INTO public.events (organizer_id, title, description, capacity, lane_count, starts_at, registration_open)
+  VALUES (v_user_id, p_title, p_description, p_capacity, p_lane_count, p_starts_at, true)
+  RETURNING * INTO v_event;
+
+  v_lane_cap := GREATEST(1, FLOOR(p_capacity / p_lane_count));
+  FOR v_i IN 0..(p_lane_count - 1) LOOP
+    INSERT INTO public.seat_partitions (event_id, lane_index, capacity, seats_taken)
+    VALUES (v_event.id, v_i, v_lane_cap, 0);
+  END LOOP;
+
+  PERFORM public.append_audit_log(
+    v_user_id,
+    'event_created',
+    'event',
+    v_event.id,
+    jsonb_build_object('title', p_title, 'capacity', p_capacity, 'lane_count', p_lane_count)
+  );
+
+  RETURN v_event;
+END;
+$$;
+
 -- Grant execution permissions
 GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.append_audit_log(uuid, text, text, uuid, jsonb) TO postgres, anon, authenticated, service_role;
@@ -384,6 +428,7 @@ GRANT EXECUTE ON FUNCTION public.promote_from_queue(uuid, integer) TO postgres, 
 GRANT EXECUTE ON FUNCTION public.release_expired_seats() TO postgres, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.simulate_surge_load(uuid, integer) TO postgres, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.reset_event_partitions(uuid) TO postgres, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.create_event_with_partitions(text, text, integer, integer, timestamptz) TO postgres, anon, authenticated, service_role;
 
 -- Reload schema cache
 NOTIFY pgrst, 'reload schema';
