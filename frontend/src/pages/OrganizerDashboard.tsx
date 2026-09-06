@@ -1,0 +1,243 @@
+import React, { useEffect, useState } from "react";
+import { Plus, Calendar, Users, Layers, ShieldCheck, ToggleLeft, ToggleRight, Loader2 } from "lucide-react";
+import { supabase } from "../lib/supabaseClient";
+import { useAuth } from "../lib/auth";
+
+export const OrganizerDashboard: React.FC = () => {
+  const { user } = useAuth();
+  const [events, setEvents] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+
+  // Form state
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [capacity, setCapacity] = useState(500);
+  const [laneCount, setLaneCount] = useState(4);
+  const [startsAt, setStartsAt] = useState("");
+
+  const loadOrganizerEvents = async () => {
+    try {
+      const { data } = await supabase.from("events").select("*").order("created_at", { ascending: false });
+      setEvents(data ?? []);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadOrganizerEvents();
+  }, []);
+
+  const handleCreateEvent = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setCreating(true);
+
+    try {
+      const dateVal = startsAt ? new Date(startsAt).toISOString() : new Date(Date.now() + 86400000 * 7).toISOString();
+      const { data: newEvent, error: evErr } = await supabase
+        .from("events")
+        .insert({
+          organizer_id: user.id,
+          title,
+          description,
+          capacity,
+          lane_count: laneCount,
+          starts_at: dateVal,
+          registration_open: true,
+        })
+        .select()
+        .single();
+
+      if (evErr) throw evErr;
+
+      // Seed seat partitions
+      if (newEvent) {
+        const laneCap = Math.floor(capacity / laneCount);
+        const partitionsToInsert = [];
+        for (let i = 0; i < laneCount; i++) {
+          partitionsToInsert.push({
+            event_id: newEvent.id,
+            lane_index: i,
+            capacity: laneCap,
+            seats_taken: 0,
+          });
+        }
+        await supabase.from("seat_partitions").insert(partitionsToInsert);
+
+        // Append audit log
+        await supabase.rpc("append_audit_log", {
+          p_actor_id: user.id,
+          p_action: "event_created",
+          p_entity: "event",
+          p_entity_id: newEvent.id,
+          p_metadata: { title, capacity, lane_count: laneCount },
+        });
+
+        // Reset form
+        setTitle("");
+        setDescription("");
+        setCapacity(500);
+        setLaneCount(4);
+        setStartsAt("");
+        await loadOrganizerEvents();
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to create event");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const toggleEventStatus = async (eventId: string, currentStatus: boolean) => {
+    try {
+      await supabase.from("events").update({ registration_open: !currentStatus }).eq("id", eventId);
+      await loadOrganizerEvents();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  return (
+    <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-10">
+      <div>
+        <h1 className="text-3xl font-extrabold text-white">Organizer Portal</h1>
+        <p className="text-sm text-slate-400 mt-1">
+          Create and manage high-volume partitioned events with autonomous resilience monitoring.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Create Event Form */}
+        <div className="rounded-2xl border border-white/10 bg-slate-900/50 backdrop-blur-md p-6 space-y-5 h-fit">
+          <div className="flex items-center gap-2">
+            <Plus className="w-5 h-5 text-teal-400" />
+            <h2 className="text-base font-bold text-white">Create New Event</h2>
+          </div>
+
+          <form onSubmit={handleCreateEvent} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-300 mb-1">Event Title</label>
+              <input
+                type="text"
+                required
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder="Tech Summit Keynote 2026"
+                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-teal-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-300 mb-1">Description</label>
+              <textarea
+                rows={2}
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="High-profile keynote session..."
+                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white placeholder-slate-500 focus:outline-none focus:border-teal-500"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Total Capacity</label>
+                <input
+                  type="number"
+                  required
+                  min={10}
+                  value={capacity}
+                  onChange={(e) => setCapacity(parseInt(e.target.value) || 0)}
+                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-teal-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Adaptive Lanes</label>
+                <select
+                  value={laneCount}
+                  onChange={(e) => setLaneCount(parseInt(e.target.value))}
+                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-teal-500"
+                >
+                  <option value={2}>2 Lanes</option>
+                  <option value={4}>4 Lanes</option>
+                  <option value={8}>8 Lanes</option>
+                  <option value={16}>16 Lanes</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-300 mb-1">Event Date & Time</label>
+              <input
+                type="datetime-local"
+                value={startsAt}
+                onChange={(e) => setStartsAt(e.target.value)}
+                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-teal-500"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={creating}
+              className="w-full py-2.5 rounded-lg bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm shadow flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+            >
+              {creating ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+              <span>Deploy Partitioned Event</span>
+            </button>
+          </form>
+        </div>
+
+        {/* Existing Events List */}
+        <div className="lg:col-span-2 space-y-4">
+          <h2 className="text-base font-bold text-white">Your Managed Events ({events.length})</h2>
+
+          {loading ? (
+            <div className="text-slate-400 text-xs py-8">Loading events…</div>
+          ) : events.length === 0 ? (
+            <div className="rounded-xl border border-white/10 bg-slate-900/30 p-8 text-center text-slate-400 text-xs">
+              No events found. Create your first high-concurrency event on the left.
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {events.map((ev) => (
+                <div
+                  key={ev.id}
+                  className="rounded-xl border border-white/10 bg-slate-900/40 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 backdrop-blur-md"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-bold text-white">{ev.title}</h3>
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/5 border border-white/10 text-teal-300">
+                        {ev.lane_count} Lanes
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-400">
+                      Capacity: {ev.capacity} seats · Started {new Date(ev.starts_at || Date.now()).toLocaleDateString()}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => toggleEventStatus(ev.id, ev.registration_open)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                        ev.registration_open
+                          ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-500/20"
+                          : "bg-slate-500/10 text-slate-400 border border-slate-500/30 hover:bg-slate-500/20"
+                      }`}
+                    >
+                      {ev.registration_open ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
+                      <span>{ev.registration_open ? "Registration Live" : "Closed"}</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};

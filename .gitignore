@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+
+# Environment and Secrets (CRITICAL)
+.env
+.env.local
+.env.*.local
+*.env
+worker/.env
+supabase/.env.secrets
+frontend/.env
+
+# Temporary script state & keys
+scripts/.demo-state
+scripts/.aws-state
+scripts/.edge-publisher-key.json
+*.pem
+*.key
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Editor and OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

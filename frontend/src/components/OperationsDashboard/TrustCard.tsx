@@ -1,0 +1,1 @@
+export { TrustCard } from "../TrustCard";
