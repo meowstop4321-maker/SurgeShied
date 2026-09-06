@@ -1,0 +1,12 @@
+sequenceDiagram
+    participant Worker
+    participant DB
+    participant Push as Push delivery
+    Worker->>DB: Write heartbeat
+    Push--xWorker: Delivery unavailable
+    loop Every 20 seconds
+        Worker->>DB: Find due queued jobs
+        Worker->>DB: Process and update job
+        Worker->>DB: Write heartbeat
+    end
+    DB-->>Worker: Worker status visible to metrics

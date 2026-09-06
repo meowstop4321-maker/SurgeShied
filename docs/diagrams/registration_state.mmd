@@ -1,0 +1,12 @@
+stateDiagram-v2
+    [*] --> Pending
+    Pending --> Confirmed: Booking completes
+    Pending --> Expired: Passport expires
+    Pending --> Cancelled: Cancellation
+    Waiting --> Promoted: Lane capacity available
+    Promoted --> Pending
+    Pending --> [*]
+    Confirmed --> [*]
+    Expired --> [*]
+    Cancelled --> [*]
+    Waiting --> [*]: User leaves queue

@@ -1,0 +1,14 @@
+flowchart TD
+    Email[Email provider failure] --> Guardian[Circuit Guardian counts failures]
+    Guardian --> Open{Three failures?}
+    Open -- No --> Retry[Backoff retry]
+    Open -- Yes --> CircuitOpen[Open circuit]
+    CircuitOpen --> Durable[Keep job in database]
+    Durable --> Sweep[Self-heal sweep]
+    Sweep --> Retry
+    Retry --> Limit{Five attempts?}
+    Limit -- No --> Send[Try provider]
+    Limit -- Yes --> DLQ[Dead letter with error]
+    Send --> Success{Success?}
+    Success -- Yes --> Closed[Mark sent and close circuit]
+    Success -- No --> Guardian

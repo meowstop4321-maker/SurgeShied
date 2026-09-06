@@ -2,6 +2,10 @@
 
 > **Zero-Overbooking, Adaptive Surge Partitions & Graceful Degradation for High-Demand Ticket Drops**
 
+SurgeShield is a hackathon-ready event registration platform designed around one hard invariant: concurrent demand must never allocate more seats than the database can prove exist. The browser experience is React/Vite, the transaction boundary is Supabase PostgreSQL and Edge Functions, and asynchronous delivery is isolated in a Node.js worker.
+
+**Documentation hub:** [Solution Overview](docs/SOLUTION_OVERVIEW.md) · [System Architecture](docs/SYSTEM_ARCHITECTURE.md) · [AWS Deployment](docs/AWS_DEPLOYMENT.md) · [Security](docs/SECURITY.md) · [Interview Prep](docs/INTERVIEW_PREP.md)
+
 [![React](https://img.shields.io/badge/Frontend-React%20%2B%20Vite%20%2B%20Tailwind-teal)](https://vitejs.dev/)
 [![Supabase](https://img.shields.io/badge/Backend-Supabase%20%2B%20Postgres%20%2B%20RLS-emerald)](https://supabase.com/)
 [![Google Cloud](https://img.shields.io/badge/Cloud-Cloud%20Run%20%2B%20Pub%2FSub-blue)](https://cloud.google.com/)
@@ -26,6 +30,37 @@
 ## 🏗️ System Architecture
 
 ```
+
+For editable architecture and sequence sources, see [docs/SEQUENCE_DIAGRAMS.md](docs/SEQUENCE_DIAGRAMS.md) and [docs/diagrams/](docs/diagrams/). The current AWS deployment is a hosting path around the same Supabase transaction authority; it is not a second registration implementation.
+
+## 🎯 Problem Statement
+
+Ticket drops create a burst of authenticated users competing for finite inventory. A single counter, synchronous email provider, or client-side duplicate check can turn retries into overbooking or an outage. SurgeShield spreads lock contention across registration lanes, makes allocation atomic in PostgreSQL, and moves notification and recovery work behind durable state.
+
+## 📚 Technical Documentation
+
+| Topic | Guide |
+|---|---|
+| Product scope and user journey | [Solution Overview](docs/SOLUTION_OVERVIEW.md) |
+| Components and boundaries | [System Architecture](docs/SYSTEM_ARCHITECTURE.md) |
+| Registration and recovery flows | [Sequence Diagrams](docs/SEQUENCE_DIAGRAMS.md) |
+| Scale and failure behavior | [Scalability and Resilience](docs/SCALABILITY_AND_RESILIENCE.md) |
+| Design choices | [Trade-off Analysis](docs/TRADEOFF_ANALYSIS.md) |
+| Security model | [Security](docs/SECURITY.md) |
+| AWS scripts and operating model | [AWS Deployment](docs/AWS_DEPLOYMENT.md) |
+| Failure scenarios | [Edge Cases](docs/EDGE_CASES.md) |
+| Metrics and runbooks | [Monitoring](docs/MONITORING.md) |
+| Evaluator preparation | [Interview Prep](docs/INTERVIEW_PREP.md) |
+
+## 🎬 Demo
+
+**Demo URL:** _Add the deployed URL here after running the deployment scripts._
+
+The simulator is available at `/simulate` when the Supabase Edge Function is deployed with `DEMO_MODE=true`. It requires an authenticated user and is intended for a controlled hackathon environment only. The demo walkthrough and judge talking points are in [docs/presentation.md](docs/presentation.md).
+
+## 🤖 AI Transparency
+
+The AI Log Explainer is deterministic application code. It maps metrics, system status, partitions, and recent audit events to plain-English explanations; it does not allocate seats, choose authorization outcomes, mutate inventory, or make opaque safety decisions. Seat allocation remains controlled by explicit TypeScript, PostgreSQL constraints/RPCs, row locks, RLS, and the SHA-256 audit chain. See [INTERVIEW_PREP.md](docs/INTERVIEW_PREP.md) for the evaluator explanation.
 User Request → Surge Router (Edge Function)
                      ├─ Anti-Bot & Cooldown Guard
                      ├─ Crowd Pressure Routing (Lane Ranking)

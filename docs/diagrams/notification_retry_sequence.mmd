@@ -1,0 +1,18 @@
+sequenceDiagram
+    participant Worker
+    participant DB
+    participant Email as Resend
+    Worker->>DB: Load queued job
+    Worker->>Email: Send confirmation
+    alt Email succeeds
+        Email-->>Worker: 200
+        Worker->>DB: Mark sent and close circuit
+    else Email fails
+        Email-->>Worker: Error
+        Worker->>DB: Increment attempts and next_retry_at
+        alt Attempts reach five
+            Worker->>DB: Mark dead_letter
+        else Attempts remain
+            Worker->>DB: Leave queued for exponential backoff
+        end
+    end

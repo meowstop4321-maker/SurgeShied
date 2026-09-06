@@ -1,0 +1,14 @@
+flowchart TB
+    Client[React Vite Client]
+    Edge[Supabase Edge Functions]
+    Core[Shared registerForEvent]
+    Data[(Supabase PostgreSQL)]
+    Worker[Node.js Worker]
+    External[Resend Email]
+    Client --> Edge
+    Edge --> Core
+    Core --> Data
+    Core -. best effort wake-up .-> Worker
+    Data --> Worker
+    Worker --> External
+    Worker --> Data

@@ -1,0 +1,9 @@
+flowchart TD
+    Start[Traffic increases] --> Measure[Measure lane saturation and queue length]
+    Measure --> Surge{Threshold crossed?}
+    Surge -- No --> Normal[Normal telemetry and registration]
+    Surge -- Yes --> CPR[Crowd Pressure Router ranks lanes]
+    CPR --> Capacity{Lane headroom?}
+    Capacity -- Yes --> Lock[Allocate under row lock]
+    Capacity -- No --> Queue[Join shortest locked queue]
+    Measure --> Lite[Set Lite Mode when surge is detected]
