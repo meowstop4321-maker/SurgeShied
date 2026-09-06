@@ -1,0 +1,13 @@
+sequenceDiagram
+    actor User
+    participant UI as Auth page
+    participant Auth as Supabase Auth
+    participant Trigger as profile trigger
+    participant DB as profiles
+    User->>UI: Submit credentials
+    UI->>Auth: Sign in or sign up
+    Auth-->>UI: JWT session
+    Auth->>Trigger: New auth user
+    Trigger->>DB: Create attendee profile
+    UI->>DB: Fetch profile and role
+    DB-->>UI: RBAC profile

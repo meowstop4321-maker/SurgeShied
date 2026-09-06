@@ -1,0 +1,15 @@
+flowchart LR
+    UI[Frontend Pages] --> Auth[Supabase Auth]
+    UI --> Router[surge-router]
+    UI --> Ops[Operations Functions]
+    Router --> Register[register.ts]
+    Sim[simulate] --> Register
+    Register --> CPR[Crowd Pressure Router]
+    CPR --> Lanes[Registration Lanes]
+    Register --> Passport[Seat Passport]
+    Register --> Queue[Waiting Queue]
+    Register --> Jobs[Notification Jobs]
+    Register --> Audit[SHA-256 Audit Chain]
+    Jobs --> Worker[Worker]
+    Worker --> Guardian[Circuit Guardian]
+    Worker --> Recovery[Ghost Seat Recovery]

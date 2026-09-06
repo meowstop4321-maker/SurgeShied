@@ -1,0 +1,14 @@
+flowchart TD
+    Failure[Downstream email failure] --> Count[Increment attempt and circuit failure count]
+    Count --> Threshold{Three consecutive failures?}
+    Threshold -- No --> Backoff[Exponential backoff]
+    Threshold -- Yes --> Open[Circuit Guardian open]
+    Open --> Durable[Leave job durable in database]
+    Durable --> Cooldown[Cooldown expires]
+    Cooldown --> Probe[Next send attempt]
+    Backoff --> Attempt[Worker retry or self-heal sweep]
+    Attempt --> Success{Send succeeds?}
+    Success -- Yes --> Sent[Mark sent and close circuit]
+    Success -- No --> Count
+    Attempt --> Limit{Five attempts?}
+    Limit -- Yes --> DLQ[Mark dead_letter]

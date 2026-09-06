@@ -1,0 +1,10 @@
+sequenceDiagram
+    participant Request as Registration request
+    participant DB as PostgreSQL
+    participant UI as Operations UI
+    Request->>DB: Read saturation and queue length
+    DB-->>Request: Surge indicators
+    Request->>DB: set_system_status(lite_mode)
+    DB-->>UI: Polled status
+    UI->>UI: Reduce non-critical telemetry and animations
+    Request->>DB: Preserve locked seat allocation

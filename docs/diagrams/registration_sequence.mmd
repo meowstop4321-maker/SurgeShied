@@ -1,0 +1,18 @@
+sequenceDiagram
+    actor Attendee
+    participant UI as React UI
+    participant Router as surge-router
+    participant Register as register.ts
+    participant DB as PostgreSQL
+    participant Worker
+    Attendee->>UI: Reserve seat
+    UI->>Router: POST with JWT and idempotency key
+    Router->>Register: registerForEvent()
+    Register->>DB: Rank lanes and lock chosen lane
+    DB-->>Register: Pending registration
+    Register->>DB: Store passport, job, audit
+    Register-->>Router: Confirmed response
+    Router-->>UI: Seat Passport and expiry
+    Register-)Worker: Best-effort wake-up
+    Worker->>DB: Read queued job
+    Worker-->>Attendee: Send confirmation email

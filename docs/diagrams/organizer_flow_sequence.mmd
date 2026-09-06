@@ -1,0 +1,14 @@
+sequenceDiagram
+    actor Organizer
+    participant UI as Organizer Dashboard
+    participant Auth as Supabase Auth
+    participant DB as PostgreSQL RLS
+    Organizer->>UI: Sign in
+    UI->>Auth: Authenticate
+    Auth-->>UI: JWT session
+    UI->>DB: Read organizer profile
+    DB-->>UI: Organizer role
+    UI->>DB: Create or update owned event
+    DB->>DB: Check auth.uid() equals organizer_id
+    DB-->>UI: Event result
+    UI->>DB: Read event registrations and metrics
