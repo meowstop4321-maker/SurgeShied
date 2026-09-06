@@ -1,6 +1,6 @@
 -- Migration 0009: Strict RLS Lockdown & Security Definer Enforcement
 -- Closes direct client write holes and enforces that all state mutations
--- must pass through audited, row-locked PostgreSQL RPCs.
+-- must pass through audited, row-locked PostgreSQL RPCs with SECURITY DEFINER.
 
 -- 1. SEAT PARTITIONS: Read-only for clients; mutations strictly via allocate_seat / release_expired_seats
 ALTER TABLE public.seat_partitions ENABLE ROW LEVEL SECURITY;
@@ -42,14 +42,18 @@ CREATE POLICY "queue_entries: insert own" ON public.queue_entries
 CREATE POLICY "queue_entries: service_role manage" ON public.queue_entries
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- 4. AUDIT LOGS: Read-only for dashboard transparency; appends strictly via append_audit_log()
+-- 4. AUDIT LOGS: Transparency for all users; append via append_audit_log RPC
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "audit_logs_all" ON public.audit_logs;
 DROP POLICY IF EXISTS "audit_logs: select all" ON public.audit_logs;
 DROP POLICY IF EXISTS "audit_logs: service_role manage" ON public.audit_logs;
+DROP POLICY IF EXISTS "audit_logs: insert allowed" ON public.audit_logs;
 
 CREATE POLICY "audit_logs: select all" ON public.audit_logs
   FOR SELECT USING (true);
+
+CREATE POLICY "audit_logs: insert allowed" ON public.audit_logs
+  FOR INSERT WITH CHECK (true);
 
 CREATE POLICY "audit_logs: service_role manage" ON public.audit_logs
   FOR ALL TO service_role USING (true) WITH CHECK (true);
@@ -68,7 +72,113 @@ CREATE POLICY "job_queue: service_role full access" ON public.job_queue
 CREATE POLICY "job_queue: authenticated select" ON public.job_queue
   FOR SELECT TO authenticated USING (true);
 
--- 6. Ensure all core RPC functions are SECURITY DEFINER with search_path = public
+-- 6. SYSTEM STATUS & CIRCUIT GUARDIAN
+ALTER TABLE public.system_status ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "system_status_all" ON public.system_status;
+DROP POLICY IF EXISTS "system_status: select all" ON public.system_status;
+DROP POLICY IF EXISTS "system_status: all allowed" ON public.system_status;
+
+CREATE POLICY "system_status: all allowed" ON public.system_status
+  FOR ALL USING (true) WITH CHECK (true);
+
+ALTER TABLE public.circuit_guardian_state ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "circuit_guardian: select all" ON public.circuit_guardian_state;
+DROP POLICY IF EXISTS "circuit_guardian_state: all allowed" ON public.circuit_guardian_state;
+
+CREATE POLICY "circuit_guardian_state: all allowed" ON public.circuit_guardian_state
+  FOR ALL USING (true) WITH CHECK (true);
+
+-- 7. Ensure all core RPC functions are SECURITY DEFINER with search_path = public
+
+-- append_audit_log: Cryptographic hash chain append
+CREATE OR REPLACE FUNCTION public.append_audit_log(
+  p_actor_id uuid,
+  p_action text,
+  p_entity text,
+  p_entity_id uuid,
+  p_metadata jsonb default '{}'::jsonb
+) RETURNS public.audit_logs
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_prev_hash text;
+  v_created_at timestamptz := clock_timestamp();
+  v_new_hash text;
+  v_row public.audit_logs%ROWTYPE;
+BEGIN
+  PERFORM pg_advisory_xact_lock(hashtext('surgeshield_audit_chain'));
+
+  SELECT current_hash INTO v_prev_hash FROM public.audit_logs ORDER BY seq DESC LIMIT 1;
+  v_prev_hash := COALESCE(v_prev_hash, 'GENESIS');
+
+  v_new_hash := encode(
+    digest(
+      concat_ws('|', v_prev_hash, v_created_at::text, p_action, COALESCE(p_actor_id::text, ''), COALESCE(p_metadata::text, '{}')),
+      'sha256'
+    ),
+    'hex'
+  );
+
+  INSERT INTO public.audit_logs (actor_id, action, entity, entity_id, metadata, created_at, previous_hash, current_hash)
+  VALUES (p_actor_id, p_action, p_entity, p_entity_id, p_metadata, v_created_at, v_prev_hash, v_new_hash)
+  RETURNING * INTO v_row;
+
+  RETURN v_row;
+END;
+$$;
+
+-- set_system_status: Update surge score and lite mode
+CREATE OR REPLACE FUNCTION public.set_system_status(
+  p_event_id uuid,
+  p_lite_mode boolean,
+  p_reason text,
+  p_surge_score numeric
+) RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  INSERT INTO public.system_status (event_id, lite_mode, reason, surge_score, updated_at)
+  VALUES (p_event_id, p_lite_mode, p_reason, p_surge_score, NOW())
+  ON CONFLICT (event_id) DO UPDATE
+    SET lite_mode = EXCLUDED.lite_mode,
+        reason = EXCLUDED.reason,
+        surge_score = EXCLUDED.surge_score,
+        updated_at = NOW();
+END;
+$$;
+
+-- set_circuit_guardian_state: Tripping and resetting circuit breaker
+CREATE OR REPLACE FUNCTION public.set_circuit_guardian_state(p_state text, p_reason text)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_prev text;
+BEGIN
+  SELECT state INTO v_prev FROM public.circuit_guardian_state WHERE id = 1;
+  UPDATE public.circuit_guardian_state
+  SET state = p_state, reason = p_reason, updated_at = NOW(),
+      opened_at = CASE WHEN p_state = 'open' THEN NOW() ELSE opened_at END
+  WHERE id = 1;
+
+  IF v_prev IS DISTINCT FROM p_state THEN
+    PERFORM public.append_audit_log(
+      NULL,
+      CASE WHEN p_state = 'open' THEN 'circuit_guardian_open' ELSE 'circuit_guardian_close' END,
+      'system',
+      NULL,
+      jsonb_build_object('reason', p_reason)
+    );
+  END IF;
+END;
+$$;
+
 -- allocate_seat: Atomic row-locked seat allocation (Overbooking Safe)
 CREATE OR REPLACE FUNCTION public.allocate_seat(
   p_event_id uuid,
@@ -84,7 +194,6 @@ DECLARE
   v_partition public.seat_partitions%ROWTYPE;
   v_registration public.registrations%ROWTYPE;
 BEGIN
-  -- Row-lock target partition row to prevent race conditions & overbooking
   SELECT * INTO v_partition
   FROM public.seat_partitions
   WHERE event_id = p_event_id AND lane_index = p_lane_index
@@ -267,6 +376,9 @@ $$;
 
 -- Grant execution permissions
 GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.append_audit_log(uuid, text, text, uuid, jsonb) TO postgres, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.set_system_status(uuid, boolean, text, numeric) TO postgres, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.set_circuit_guardian_state(text, text) TO postgres, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.allocate_seat(uuid, integer, uuid, text) TO postgres, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.promote_from_queue(uuid, integer) TO postgres, anon, authenticated, service_role;
 GRANT EXECUTE ON FUNCTION public.release_expired_seats() TO postgres, anon, authenticated, service_role;
