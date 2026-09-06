@@ -77,6 +77,7 @@ async function fallbackRegister(eventId: string) {
     p_lane_index: chosenLane,
     p_user_id: userId,
     p_idempotency_key: crypto.randomUUID(),
+    p_confirmed: true,
   });
 
   if (allocErr) {

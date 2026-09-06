@@ -1,8 +1,7 @@
--- Migration 0009: Strict RLS Lockdown & Security Definer Enforcement
--- Closes direct client write holes and enforces that all state mutations
--- must pass through audited, row-locked PostgreSQL RPCs with SECURITY DEFINER.
+-- Migration 0009: Strict RLS Lockdown, Lifecycle Confirmations, & Security Definer Enforcement
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- 1. SEAT PARTITIONS: Read-only for clients; mutations strictly via allocate_seat / release_expired_seats
+-- 1. SEAT PARTITIONS: Read-only for clients; mutations strictly via RPCs
 ALTER TABLE public.seat_partitions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "partitions_all" ON public.seat_partitions;
 DROP POLICY IF EXISTS "seat_partitions: select all" ON public.seat_partitions;
@@ -14,7 +13,7 @@ CREATE POLICY "seat_partitions: select all" ON public.seat_partitions
 CREATE POLICY "seat_partitions: service_role manage" ON public.seat_partitions
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- 2. REGISTRATIONS: Attendees can view own; mutations ONLY through allocate_seat RPC
+-- 2. REGISTRATIONS: Attendees view own; mutations ONLY through allocate_seat RPC
 ALTER TABLE public.registrations ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "registrations_all" ON public.registrations;
 DROP POLICY IF EXISTS "registrations: select own" ON public.registrations;
@@ -26,7 +25,7 @@ CREATE POLICY "registrations: select own" ON public.registrations
 CREATE POLICY "registrations: service_role manage" ON public.registrations
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- 3. QUEUE ENTRIES: Attendees view own and can join; promotions strictly via promote_from_queue RPC
+-- 3. QUEUE ENTRIES: Attendees view own and can join; one active wait per event
 ALTER TABLE public.queue_entries ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "queue_all" ON public.queue_entries;
 DROP POLICY IF EXISTS "queue_entries: select own" ON public.queue_entries;
@@ -42,12 +41,16 @@ CREATE POLICY "queue_entries: insert own" ON public.queue_entries
 CREATE POLICY "queue_entries: service_role manage" ON public.queue_entries
   FOR ALL TO service_role USING (true) WITH CHECK (true);
 
+CREATE UNIQUE INDEX IF NOT EXISTS queue_entries_one_active_per_user
+  ON public.queue_entries (event_id, user_id)
+  WHERE status = 'waiting';
+
 -- 4. AUDIT LOGS: Transparency for all users; append via append_audit_log RPC
 ALTER TABLE public.audit_logs ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "audit_logs_all" ON public.audit_logs;
 DROP POLICY IF EXISTS "audit_logs: select all" ON public.audit_logs;
-DROP POLICY IF EXISTS "audit_logs: service_role manage" ON public.audit_logs;
 DROP POLICY IF EXISTS "audit_logs: insert allowed" ON public.audit_logs;
+DROP POLICY IF EXISTS "audit_logs: service_role manage" ON public.audit_logs;
 
 CREATE POLICY "audit_logs: select all" ON public.audit_logs
   FOR SELECT USING (true);
@@ -75,7 +78,6 @@ CREATE POLICY "job_queue: authenticated select" ON public.job_queue
 -- 6. SYSTEM STATUS & CIRCUIT GUARDIAN
 ALTER TABLE public.system_status ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "system_status_all" ON public.system_status;
-DROP POLICY IF EXISTS "system_status: select all" ON public.system_status;
 DROP POLICY IF EXISTS "system_status: all allowed" ON public.system_status;
 
 CREATE POLICY "system_status: all allowed" ON public.system_status
@@ -88,9 +90,7 @@ DROP POLICY IF EXISTS "circuit_guardian_state: all allowed" ON public.circuit_gu
 CREATE POLICY "circuit_guardian_state: all allowed" ON public.circuit_guardian_state
   FOR ALL USING (true) WITH CHECK (true);
 
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
--- 7. Ensure all core RPC functions are SECURITY DEFINER with search_path = public, extensions
+-- 7. CORE RPC FUNCTIONS (All marked SECURITY DEFINER)
 
 -- append_audit_log: Cryptographic hash chain append
 CREATE OR REPLACE FUNCTION public.append_audit_log(
@@ -131,71 +131,29 @@ BEGIN
 END;
 $$;
 
--- set_system_status: Update surge score and lite mode
-CREATE OR REPLACE FUNCTION public.set_system_status(
-  p_event_id uuid,
-  p_lite_mode boolean,
-  p_reason text,
-  p_surge_score numeric
-) RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-BEGIN
-  INSERT INTO public.system_status (event_id, lite_mode, reason, surge_score, updated_at)
-  VALUES (p_event_id, p_lite_mode, p_reason, p_surge_score, NOW())
-  ON CONFLICT (event_id) DO UPDATE
-    SET lite_mode = EXCLUDED.lite_mode,
-        reason = EXCLUDED.reason,
-        surge_score = EXCLUDED.surge_score,
-        updated_at = NOW();
-END;
-$$;
-
--- set_circuit_guardian_state: Tripping and resetting circuit breaker
-CREATE OR REPLACE FUNCTION public.set_circuit_guardian_state(p_state text, p_reason text)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_prev text;
-BEGIN
-  SELECT state INTO v_prev FROM public.circuit_guardian_state WHERE id = 1;
-  UPDATE public.circuit_guardian_state
-  SET state = p_state, reason = p_reason, updated_at = NOW(),
-      opened_at = CASE WHEN p_state = 'open' THEN NOW() ELSE opened_at END
-  WHERE id = 1;
-
-  IF v_prev IS DISTINCT FROM p_state THEN
-    PERFORM public.append_audit_log(
-      NULL,
-      CASE WHEN p_state = 'open' THEN 'circuit_guardian_open' ELSE 'circuit_guardian_close' END,
-      'system',
-      NULL,
-      jsonb_build_object('reason', p_reason)
-    );
-  END IF;
-END;
-$$;
-
 -- allocate_seat: Atomic row-locked seat allocation (Overbooking Safe)
+-- Sets status = 'confirmed' by default with confirmed_at timestamp so Ghost Seat Recovery never expires confirmed tickets!
 CREATE OR REPLACE FUNCTION public.allocate_seat(
   p_event_id uuid,
   p_lane_index integer,
   p_user_id uuid,
-  p_idempotency_key text
+  p_idempotency_key text,
+  p_confirmed boolean default true
 ) RETURNS public.registrations
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
+  v_caller_id uuid := auth.uid();
   v_partition public.seat_partitions%ROWTYPE;
   v_registration public.registrations%ROWTYPE;
 BEGIN
+  -- Security check: user can only allocate for themselves unless service_role
+  IF auth.role() IS NOT NULL AND auth.role() <> 'service_role' AND v_caller_id IS NOT NULL AND v_caller_id <> p_user_id THEN
+    RAISE EXCEPTION 'unauthorized: cannot allocate seat for another user' USING errcode = '42501';
+  END IF;
+
   SELECT * INTO v_partition
   FROM public.seat_partitions
   WHERE event_id = p_event_id AND lane_index = p_lane_index
@@ -219,17 +177,42 @@ BEGIN
     lane_index,
     status,
     idempotency_key,
+    confirmed_at,
     seat_passport_expires_at
   ) VALUES (
     p_event_id,
     p_user_id,
     p_lane_index,
-    'pending',
+    CASE WHEN p_confirmed THEN 'confirmed' ELSE 'pending' END,
     p_idempotency_key,
-    NOW() + INTERVAL '2 minutes'
+    CASE WHEN p_confirmed THEN NOW() ELSE NULL END,
+    CASE WHEN p_confirmed THEN NULL ELSE NOW() + INTERVAL '2 minutes' END
   ) RETURNING * INTO v_registration;
 
   RETURN v_registration;
+END;
+$$;
+
+-- confirm_registration: Explicitly promote pending hold to confirmed
+CREATE OR REPLACE FUNCTION public.confirm_registration(p_registration_id uuid, p_user_id uuid)
+RETURNS public.registrations
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_reg public.registrations%ROWTYPE;
+BEGIN
+  UPDATE public.registrations
+  SET status = 'confirmed',
+      confirmed_at = NOW(),
+      seat_passport_expires_at = NULL
+  WHERE id = p_registration_id
+    AND user_id = p_user_id
+    AND status = 'pending'
+  RETURNING * INTO v_reg;
+
+  RETURN v_reg;
 END;
 $$;
 
@@ -256,7 +239,7 @@ BEGIN
   END IF;
 
   BEGIN
-    v_registration := public.allocate_seat(p_event_id, p_lane_index, v_entry.user_id, gen_random_uuid()::text);
+    v_registration := public.allocate_seat(p_event_id, p_lane_index, v_entry.user_id, gen_random_uuid()::text, true);
   EXCEPTION WHEN OTHERS THEN
     RETURN NULL;
   END;
@@ -269,7 +252,7 @@ BEGIN
 END;
 $$;
 
--- release_expired_seats: Ghost Seat Recovery sweep
+-- release_expired_seats: Ghost Seat Recovery sweep (Only reclaims truly unconfirmed abandoned holds)
 CREATE OR REPLACE FUNCTION public.release_expired_seats()
 RETURNS integer
 LANGUAGE plpgsql
@@ -298,6 +281,55 @@ BEGIN
   END LOOP;
 
   RETURN v_count;
+END;
+$$;
+
+-- create_event_with_partitions: Atomic event creation with strict capacity conservation
+CREATE OR REPLACE FUNCTION public.create_event_with_partitions(
+  p_title text,
+  p_description text,
+  p_capacity integer,
+  p_lane_count integer,
+  p_starts_at timestamptz
+) RETURNS public.events
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, extensions
+AS $$
+DECLARE
+  v_user_id uuid := auth.uid();
+  v_event public.events%ROWTYPE;
+  v_base_cap integer;
+  v_remainder integer;
+  v_lane_cap integer;
+  v_i integer;
+BEGIN
+  IF v_user_id IS NULL THEN
+    SELECT id INTO v_user_id FROM public.profiles LIMIT 1;
+  END IF;
+
+  INSERT INTO public.events (organizer_id, title, description, capacity, lane_count, starts_at, registration_open)
+  VALUES (v_user_id, p_title, p_description, p_capacity, p_lane_count, p_starts_at, true)
+  RETURNING * INTO v_event;
+
+  v_base_cap := FLOOR(p_capacity / p_lane_count);
+  v_remainder := p_capacity % p_lane_count;
+
+  FOR v_i IN 0..(p_lane_count - 1) LOOP
+    v_lane_cap := v_base_cap + (CASE WHEN v_i < v_remainder THEN 1 ELSE 0 END);
+    INSERT INTO public.seat_partitions (event_id, lane_index, capacity, seats_taken)
+    VALUES (v_event.id, v_i, v_lane_cap, 0);
+  END LOOP;
+
+  PERFORM public.append_audit_log(
+    v_user_id,
+    'event_created',
+    'event',
+    v_event.id,
+    jsonb_build_object('title', p_title, 'capacity', p_capacity, 'lane_count', p_lane_count)
+  );
+
+  RETURN v_event;
 END;
 $$;
 
@@ -376,61 +408,29 @@ BEGIN
 END;
 $$;
 
--- create_event_with_partitions: Atomic event creation + partition seeding + audit log
-CREATE OR REPLACE FUNCTION public.create_event_with_partitions(
-  p_title text,
-  p_description text,
-  p_capacity integer,
-  p_lane_count integer,
-  p_starts_at timestamptz
-) RETURNS public.events
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  v_user_id uuid := auth.uid();
-  v_event public.events%ROWTYPE;
-  v_lane_cap integer;
-  v_i integer;
-BEGIN
-  IF v_user_id IS NULL THEN
-    SELECT id INTO v_user_id FROM public.profiles LIMIT 1;
-  END IF;
-
-  INSERT INTO public.events (organizer_id, title, description, capacity, lane_count, starts_at, registration_open)
-  VALUES (v_user_id, p_title, p_description, p_capacity, p_lane_count, p_starts_at, true)
-  RETURNING * INTO v_event;
-
-  v_lane_cap := GREATEST(1, FLOOR(p_capacity / p_lane_count));
-  FOR v_i IN 0..(p_lane_count - 1) LOOP
-    INSERT INTO public.seat_partitions (event_id, lane_index, capacity, seats_taken)
-    VALUES (v_event.id, v_i, v_lane_cap, 0);
-  END LOOP;
-
-  PERFORM public.append_audit_log(
-    v_user_id,
-    'event_created',
-    'event',
-    v_event.id,
-    jsonb_build_object('title', p_title, 'capacity', p_capacity, 'lane_count', p_lane_count)
-  );
-
-  RETURN v_event;
-END;
-$$;
-
--- Grant execution permissions
+-- Permissions & Function Access Lockdown
 GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+
+-- User / Client RPCs
 GRANT EXECUTE ON FUNCTION public.append_audit_log(uuid, text, text, uuid, jsonb) TO postgres, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.set_system_status(uuid, boolean, text, numeric) TO postgres, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.set_circuit_guardian_state(text, text) TO postgres, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.allocate_seat(uuid, integer, uuid, text) TO postgres, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.promote_from_queue(uuid, integer) TO postgres, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.release_expired_seats() TO postgres, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.simulate_surge_load(uuid, integer) TO postgres, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.reset_event_partitions(uuid) TO postgres, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.create_event_with_partitions(text, text, integer, integer, timestamptz) TO postgres, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.allocate_seat(uuid, integer, uuid, text, boolean) TO postgres, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.confirm_registration(uuid, uuid) TO postgres, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.create_event_with_partitions(text, text, integer, integer, timestamptz) TO postgres, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.simulate_surge_load(uuid, integer) TO postgres, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.reset_event_partitions(uuid) TO postgres, authenticated, service_role;
+
+-- Background Worker / Administrative RPCs (Strict service_role only)
+REVOKE EXECUTE ON FUNCTION public.claim_job_batch(text, integer, text[], integer) FROM anon, authenticated, public;
+REVOKE EXECUTE ON FUNCTION public.complete_job(uuid, jsonb) FROM anon, authenticated, public;
+REVOKE EXECUTE ON FUNCTION public.fail_job(uuid, text, integer) FROM anon, authenticated, public;
+REVOKE EXECUTE ON FUNCTION public.release_expired_seats() FROM anon, authenticated, public;
+REVOKE EXECUTE ON FUNCTION public.promote_from_queue(uuid, integer) FROM anon, authenticated, public;
+
+GRANT EXECUTE ON FUNCTION public.claim_job_batch(text, integer, text[], integer) TO postgres, service_role;
+GRANT EXECUTE ON FUNCTION public.complete_job(uuid, jsonb) TO postgres, service_role;
+GRANT EXECUTE ON FUNCTION public.fail_job(uuid, text, integer) TO postgres, service_role;
+GRANT EXECUTE ON FUNCTION public.release_expired_seats() TO postgres, service_role;
+GRANT EXECUTE ON FUNCTION public.promote_from_queue(uuid, integer) TO postgres, service_role;
 
 -- Reload schema cache
 NOTIFY pgrst, 'reload schema';

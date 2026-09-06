@@ -45,7 +45,9 @@ export const EventDetailPage: React.FC = () => {
           .select("*")
           .eq("event_id", id)
           .eq("user_id", session.user.id)
-          .eq("status", "confirmed")
+          .in("status", ["confirmed", "pending"])
+          .order("created_at", { ascending: false })
+          .limit(1)
           .maybeSingle();
         setExistingReg(reg);
       }

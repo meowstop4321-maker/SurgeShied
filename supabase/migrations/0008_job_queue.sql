@@ -211,9 +211,10 @@ as $$
 $$;
 
 -- Permissions
-grant all on public.job_queue to postgres, anon, authenticated, service_role;
-grant execute on function public.claim_job_batch(text, integer, text[], integer) to postgres, anon, authenticated, service_role;
-grant execute on function public.enqueue_job(text, jsonb, integer, timestamptz, integer) to postgres, anon, authenticated, service_role;
-grant execute on function public.complete_job(uuid, jsonb) to postgres, anon, authenticated, service_role;
-grant execute on function public.fail_job(uuid, text, integer) to postgres, anon, authenticated, service_role;
-grant execute on function public.get_job_queue_depth() to postgres, anon, authenticated, service_role;
+grant select on public.job_queue to postgres, authenticated, service_role;
+grant all on public.job_queue to postgres, service_role;
+grant execute on function public.claim_job_batch(text, integer, text[], integer) to postgres, service_role;
+grant execute on function public.enqueue_job(text, jsonb, integer, timestamptz, integer) to postgres, authenticated, service_role;
+grant execute on function public.complete_job(uuid, jsonb) to postgres, service_role;
+grant execute on function public.fail_job(uuid, text, integer) to postgres, service_role;
+grant execute on function public.get_job_queue_depth() to postgres, authenticated, service_role;

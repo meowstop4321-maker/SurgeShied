@@ -97,8 +97,8 @@ export async function registerForEvent(
     p_surge_score: avgSaturation,
   });
 
-  // If all lanes are saturated -> Dynamic Queue Routing based on shortest estimated wait time
-  if (ranked.length === 0) {
+  // Helper to place user in the optimal waiting queue lane
+  const enqueueUser = async () => {
     const laneQueueLens = await Promise.all(
       lanes.map(async (l) => {
         const { count } = await admin
@@ -116,7 +116,6 @@ export async function registerForEvent(
       }),
     );
 
-    // Pick lane with minimum wait time / shortest queue
     const optimalLane = laneQueueLens.sort((a, b) => a.count - b.count)[0];
     const { error: qErr } = await admin.from("queue_entries").insert({
       event_id: eventId,
@@ -124,7 +123,9 @@ export async function registerForEvent(
       lane_index: optimalLane.lane_index,
       status: "waiting",
     });
-    if (qErr) return { status: 500, body: { status: "error", message: "join queue failed" } };
+    if (qErr && !qErr.message?.includes("duplicate")) {
+      return { status: 500, body: { status: "error", message: "join queue failed" } };
+    }
 
     const response = {
       status: "queued",
@@ -137,6 +138,11 @@ export async function registerForEvent(
     };
     await admin.from("idempotency_keys").insert({ key: idempotencyKey, request_hash: eventId, response });
     return { status: 200, body: response };
+  };
+
+  // If all lanes are saturated -> Dynamic Queue Routing based on shortest estimated wait time
+  if (ranked.length === 0) {
+    return await enqueueUser();
   }
 
   await admin.rpc("append_audit_log", {
@@ -155,6 +161,7 @@ export async function registerForEvent(
       p_lane_index: lane.lane_index,
       p_user_id: userId,
       p_idempotency_key: idempotencyKey,
+      p_confirmed: true,
     });
     if (!error && data) {
       registration = data;
@@ -169,7 +176,8 @@ export async function registerForEvent(
   }
 
   if (!registration) {
-    return { status: 409, body: { status: "error", message: "all lanes filled during allocation, please retry" } };
+    // All candidate lanes filled under race conditions -> automatically join queue without 409 error
+    return await enqueueUser();
   }
 
   // Issue 2-minute booking window Seat Passport (Max 6 minutes window cap)
