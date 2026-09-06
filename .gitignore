@@ -34,3 +34,5 @@ yarn-error.log*
 Thumbs.db
 .vscode/
 .idea/
+
+supabase/.temp/
