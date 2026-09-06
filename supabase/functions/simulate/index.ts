@@ -50,10 +50,14 @@ async function runLoad(admin: ReturnType<typeof createClient>, eventId: string, 
     .from("profiles")
     .select("id")
     .eq("role", "attendee")
-    .order("id") // stable-ish; true randomness isn't the point of a demo load test
+    .order("id")
     .limit(count);
 
-  const users = pool ?? [];
+  const users: { id: string }[] = [...(pool ?? [])];
+  while (users.length < count) {
+    users.push({ id: crypto.randomUUID() });
+  }
+
   const tally = { attempted: users.length, confirmed: 0, queued: 0, already_registered: 0, error: 0 };
 
   for (let i = 0; i < users.length; i += BATCH_SIZE) {

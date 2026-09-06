@@ -5,6 +5,7 @@ import { LiteModeBanner } from "../components/LiteModeBanner";
 import { MetricTile } from "../components/OperationsDashboard/MetricTile";
 import { SurgeGauge } from "../components/OperationsDashboard/SurgeGauge";
 import { PartitionBoard } from "../components/OperationsDashboard/PartitionBoard";
+import { LiveAuditLogTable } from "../components/OperationsDashboard/LiveAuditLogTable";
 import { TrustCard } from "../components/TrustCard";
 import { SimulationPanel } from "../components/SimulationPanel";
 import { LogExplainerCard } from "../components/LogExplainerCard";
@@ -157,6 +158,8 @@ export function OperationsDashboard() {
           {eventId && <PartitionBoard eventId={eventId} />}
 
           {eventId && <LogExplainerCard eventId={eventId} />}
+
+          {eventId && <LiveAuditLogTable eventId={eventId} />}
 
           {eventId && <SimulationPanel eventId={eventId} />}
         </div>
