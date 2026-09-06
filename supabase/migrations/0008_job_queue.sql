@@ -33,17 +33,11 @@ create index if not exists idx_job_queue_type_status
 -- Enable RLS
 alter table public.job_queue enable row level security;
 
-create policy "job_queue: select all" on public.job_queue
-  for select using (true);
+create policy "job_queue: service_role full access" on public.job_queue
+  for all to service_role using (true) with check (true);
 
-create policy "job_queue: insert all" on public.job_queue
-  for insert with check (true);
-
-create policy "job_queue: update all" on public.job_queue
-  for update using (true);
-
-create policy "job_queue: delete all" on public.job_queue
-  for delete using (true);
+create policy "job_queue: authenticated select" on public.job_queue
+  for select to authenticated using (true);
 
 -- Atomic job claiming using Postgres FOR UPDATE SKIP LOCKED
 create or replace function public.claim_job_batch(

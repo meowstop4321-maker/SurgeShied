@@ -1,0 +1,21 @@
+name: Security & Secret Scan
+
+on:
+  push:
+    branches: [ main, anisha ]
+  pull_request:
+    branches: [ main, anisha ]
+
+jobs:
+  gitleaks:
+    name: Gitleaks Secret Scanner
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks Secret Detection
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
