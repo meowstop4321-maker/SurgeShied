@@ -3,7 +3,7 @@ import { createHmac } from "node:crypto";
 
 /**
  * WorkerManager — Dynamic Auto-Scaling Worker Pool Engine for SurgeShield
- * 
+ *
  * Features:
  * - Real-time queue depth monitoring across priority tiers (Critical, High, Normal, Low)
  * - Dynamic autoscaling from minWorkers (default 1) to maxWorkers (default 10)
@@ -155,7 +155,7 @@ export class WorkerManager {
     this.registerHandler("ghost_seat_sweep", async () => {
       const { data: releasedCount, error } = await this.admin.rpc("release_expired_seats");
       if (error) throw error;
-      
+
       // Complete promotions for any un-ticketed pending registrations
       let promotionsFinished = 0;
       const { data: rows } = await this.admin
@@ -297,6 +297,22 @@ export class WorkerManager {
     if (this.metrics.scalingEvents.length > 30) {
       this.metrics.scalingEvents.pop();
     }
+
+    // Persist to the audit chain so scaling is visible on the dashboard's
+    // live log stream and in get_ops_metrics()'s autoscaling_status, not
+    // just in this process's own in-memory history (which is lost on
+    // restart and invisible to the browser, which can't reach this
+    // process directly — see worker/index.js's heartbeat comment).
+    const auditAction = action === "scale_up" ? "worker_scaled_up" : "worker_scaled_down";
+    this.admin
+      .rpc("append_audit_log", {
+        p_actor_id: null,
+        p_action: auditAction,
+        p_entity: "worker",
+        p_entity_id: null,
+        p_metadata: { from_workers: from, to_workers: to, pending_jobs: depth.total_pending, critical_jobs: depth.critical_pending },
+      })
+      .catch((err) => console.error("[WorkerManager] failed to audit-log scale event:", err.message));
   }
 
   // --- Worker Lifecycle ----------------------------------------------------

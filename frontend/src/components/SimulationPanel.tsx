@@ -47,7 +47,7 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({ eventId }) => 
 
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <button
-          onClick={() => runSim("load", 100)}
+          onClick={() => runSim("load_rate", 100)}
           disabled={!eventId || loading !== null}
           className="p-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-left transition-all group disabled:opacity-50"
         >
@@ -55,12 +55,12 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({ eventId }) => 
             <Users size={18} />
             <Play size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
-          <div className="text-sm font-semibold text-white mt-2">100 Users</div>
-          <div className="text-[11px] text-slate-400">Parallel lane load</div>
+          <div className="text-sm font-semibold text-white mt-2">100 users/min</div>
+          <div className="text-[11px] text-slate-400">Sustained arrival rate</div>
         </button>
 
         <button
-          onClick={() => runSim("load", 1000)}
+          onClick={() => runSim("load_rate", 1000)}
           disabled={!eventId || loading !== null}
           className="p-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-left transition-all group disabled:opacity-50"
         >
@@ -68,8 +68,21 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({ eventId }) => 
             <Users size={18} />
             <Play size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
           </div>
-          <div className="text-sm font-semibold text-white mt-2">1,000 Users</div>
-          <div className="text-[11px] text-slate-400">High concurrency flood</div>
+          <div className="text-sm font-semibold text-white mt-2">1,000 users/min</div>
+          <div className="text-[11px] text-slate-400">High-rate sustained ramp</div>
+        </button>
+
+        <button
+          onClick={() => runSim("load", 100)}
+          disabled={!eventId || loading !== null}
+          className="p-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-left transition-all group disabled:opacity-50"
+        >
+          <div className="flex items-center justify-between text-slate-400 group-hover:text-slate-300">
+            <Zap size={18} />
+            <Play size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+          </div>
+          <div className="text-sm font-semibold text-white mt-2">100 Users (Instant)</div>
+          <div className="text-[11px] text-slate-400">All at once, no ramp</div>
         </button>
 
         <button
@@ -142,8 +155,13 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({ eventId }) => 
         <div className="text-xs text-emerald-300 bg-emerald-500/10 p-3.5 rounded-lg border border-emerald-500/20 space-y-1">
           <div className="flex items-center gap-1.5 font-semibold">
             <CheckCircle2 size={14} />
-            <span>Simulation Executed Successfully ({lastResult.action})</span>
+            <span>Simulation {lastResult.started ? "Started" : "Executed Successfully"} ({lastResult.action})</span>
           </div>
+          {lastResult.started && (
+            <p className="text-slate-300 font-mono text-[11px]">
+              {lastResult.message ?? `Ramping ${lastResult.target_count} registrations over ${lastResult.duration_seconds}s`}
+            </p>
+          )}
           {lastResult.attempted !== undefined && (
             <p className="text-slate-300 font-mono text-[11px]">
               Attempted: {lastResult.attempted} | Confirmed: {lastResult.confirmed} | Queued: {lastResult.queued} | Already Registered: {lastResult.already_registered} | Errors: {lastResult.error}

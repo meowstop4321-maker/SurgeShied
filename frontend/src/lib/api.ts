@@ -1,5 +1,14 @@
 import { supabase, FUNCTIONS_URL } from "./supabaseClient";
 
+// Distinguishes "the edge function ran and returned a real response" from
+// "the edge function is unreachable" (not deployed, network failure, cold
+// start timeout). supabase-js reports BOTH as `error`, which previously
+// meant a genuine 409 "closed" or 429 "rate_limited" response from
+// surge-router silently fell through to fallbackRegister() below — a
+// second, weaker implementation of the same decision that doesn't know
+// about registration_open, rate limiting, or dynamic lane rebalancing.
+// Only a true network-level failure should reach the fallback; a real HTTP
+// response, even a non-2xx one, should be returned as-is.
 async function authedFetch(path: string, body: Record<string, unknown>) {
   try {
     const { data, error } = await supabase.functions.invoke(path, {
@@ -10,6 +19,14 @@ async function authedFetch(path: string, body: Record<string, unknown>) {
     });
 
     if (error) {
+      const context = (error as { context?: Response }).context;
+      if (context && typeof context.json === "function") {
+        try {
+          return await context.json();
+        } catch {
+          // Response body wasn't JSON — treat as unreachable, fall through.
+        }
+      }
       return null;
     }
     return data;
@@ -18,11 +35,22 @@ async function authedFetch(path: string, body: Record<string, unknown>) {
   }
 }
 
-// Robust fallback registration when edge function is not deployed yet
+// Robust fallback registration when edge function is not deployed at all.
+// Only reached when authedFetch() above could not get ANY response from
+// surge-router — never as a silent substitute for a real error response.
 async function fallbackRegister(eventId: string) {
   const { data: userData } = await supabase.auth.getUser();
   if (!userData?.user) throw new Error("Please sign in to register");
   const userId = userData.user.id;
+
+  const { data: event } = await supabase
+    .from("events")
+    .select("registration_open")
+    .eq("id", eventId)
+    .maybeSingle();
+  if (event && event.registration_open === false) {
+    return { status: "closed", message: "registration is closed" };
+  }
 
   // 1. Check existing registration
   const { data: existingReg } = await supabase
@@ -34,6 +62,20 @@ async function fallbackRegister(eventId: string) {
     .maybeSingle();
   if (existingReg) {
     return { status: "already_registered", registration: existingReg, message: "You already have an active registration for this event" };
+  }
+
+  // 1b. Already waiting in this event's queue? Don't hand out a second,
+  // possibly different, lane — mirrors register.ts's Strict No-Switching
+  // Policy so the two paths can't disagree about which lane someone is in.
+  const { data: existingQueueEntry } = await supabase
+    .from("queue_entries")
+    .select("lane_index")
+    .eq("event_id", eventId)
+    .eq("user_id", userId)
+    .eq("status", "waiting")
+    .maybeSingle();
+  if (existingQueueEntry) {
+    return { status: "queued", lane_index: existingQueueEntry.lane_index, locked_lane: true };
   }
 
   // 2. Fetch lanes & apply Crowd Pressure Routing
@@ -52,16 +94,28 @@ async function fallbackRegister(eventId: string) {
     .filter((l) => l.headroom > 0)
     .sort((a, b) => b.headroom / b.capacity - a.headroom / a.capacity);
 
-  // If all lanes full -> join queue
+  // If all lanes full -> join queue behind whichever lane currently has the
+  // shortest wait, same tie-break register.ts uses server-side.
   if (ranked.length === 0) {
+    const { data: waitingRows } = await supabase
+      .from("queue_entries")
+      .select("lane_index")
+      .eq("event_id", eventId)
+      .eq("status", "waiting");
+    const countByLane = new Map<number, number>();
+    (waitingRows ?? []).forEach((r) => countByLane.set(r.lane_index, (countByLane.get(r.lane_index) ?? 0) + 1));
+    const shortest = [...lanes]
+      .map((l) => ({ lane_index: l.lane_index, count: countByLane.get(l.lane_index) ?? 0 }))
+      .sort((a, b) => a.count - b.count)[0];
+
     const { error: qErr } = await supabase.from("queue_entries").insert({
       event_id: eventId,
       user_id: userId,
-      lane_index: 0,
+      lane_index: shortest.lane_index,
       status: "waiting",
     });
     if (qErr && !qErr.message.includes("duplicate")) throw qErr;
-    return { status: "queued", lane_index: 0, position: 1 };
+    return { status: "queued", lane_index: shortest.lane_index, position: shortest.count + 1 };
   }
 
   // Try allocate seat in healthiest lane via locked RPC
@@ -79,6 +133,13 @@ async function fallbackRegister(eventId: string) {
       return { status: "already_registered", message: "You already have an active registration" };
     }
     if (allocErr.message?.includes("lane_full")) {
+      const { error: qErr } = await supabase.from("queue_entries").insert({
+        event_id: eventId,
+        user_id: userId,
+        lane_index: chosenLane,
+        status: "waiting",
+      });
+      if (qErr && !qErr.message.includes("duplicate")) throw qErr;
       return { status: "queued", lane_index: chosenLane, position: 1 };
     }
     throw allocErr;
@@ -99,13 +160,43 @@ export async function registerForEvent(eventId: string) {
 }
 
 // Client simulation fallback
-async function fallbackSimulate(action: string, eventId?: string, count: number = 100) {
+async function fallbackSimulate(action: string, eventId?: string, count: number = 100, durationSeconds: number = 60) {
   if (!eventId && action !== "recover_system" && action !== "trigger_email_failure") {
     const { data: evs } = await supabase.from("events").select("id").limit(1);
     if (evs && evs.length > 0) eventId = evs[0].id;
   }
 
   switch (action) {
+    case "load_rate": {
+      // No edge function reachable, so there's no server-side background
+      // task to hand this off to — approximate the same "spread arrivals
+      // over a duration" behavior with a client-side interval instead of
+      // firing simulate_surge_load's full count in one instant jump. This
+      // stops if the tab is closed mid-ramp (a real limitation of running
+      // in the browser instead of the edge function background task), so
+      // it's a degraded fallback, not a full substitute.
+      if (!eventId) throw new Error("No event available for simulation");
+      const totalWaves = Math.max(1, Math.round((durationSeconds * 1000) / 2000));
+      const perWave = Math.max(1, Math.ceil(count / totalWaves));
+      let sent = 0;
+      const runWave = async () => {
+        const thisWave = Math.min(perWave, count - sent);
+        if (thisWave <= 0) return;
+        await supabase.rpc("simulate_surge_load", { p_event_id: eventId, p_count: thisWave });
+        sent += thisWave;
+        if (sent < count) setTimeout(runWave, 2000);
+      };
+      runWave();
+      return {
+        status: "ok",
+        action,
+        started: true,
+        target_count: count,
+        duration_seconds: durationSeconds,
+        message: `Ramping ${count} registrations over ${durationSeconds}s via client fallback (edge function unreachable) — watch the dashboard.`,
+      };
+    }
+
     case "load":
     case "trigger_surge": {
       if (!eventId) throw new Error("No event available for simulation");
@@ -156,10 +247,10 @@ async function fallbackSimulate(action: string, eventId?: string, count: number 
   }
 }
 
-export async function simulate(action: string, eventId?: string, count?: number) {
-  const result = await authedFetch("simulate", { action, event_id: eventId, count });
+export async function simulate(action: string, eventId?: string, count?: number, durationSeconds?: number) {
+  const result = await authedFetch("simulate", { action, event_id: eventId, count, duration_seconds: durationSeconds });
   if (result) return result;
-  return fallbackSimulate(action, eventId, count);
+  return fallbackSimulate(action, eventId, count, durationSeconds);
 }
 
 export async function listEvents() {
@@ -180,41 +271,128 @@ export async function getSeatPartitions(eventId: string) {
   return data ?? [];
 }
 
-export async function getOpsMetrics(eventId: string) {
+export type OpsMetrics = {
+  requests_per_sec: number;
+  queue_length: number;
+  active_lanes: number;
+  total_lanes: number;
+  surge_score: number | null;
+  lite_mode: boolean;
+  notification_queued: number;
+  notification_retries: number;
+  dead_letter_count: number;
+  circuit_state: "closed" | "open" | "half_open";
+  worker_status: "healthy" | "down";
+  active_worker_count: number;
+  // Live Operations Dashboard fields (migrations/0011_observability.sql).
+  active_users: number;
+  successful_registrations: number;
+  failed_registrations: number;
+  queue_processing_rate_per_min: number;
+  pending_jobs: number;
+  retry_count: number;
+  avg_response_time_ms: number;
+  p95_latency_ms: number;
+  p99_latency_ms: number;
+  seats_remaining: number;
+  cpu_percent: number | null;
+  memory_used_mb: number | null;
+  memory_total_mb: number | null;
+  active_instances: number | null;
+  min_instances: number | null;
+  max_instances: number | null;
+  autoscaling_status: "scaling_up" | "scaling_down" | "stable";
+  autoscaling_note: string;
+};
+
+const OPS_METRICS_FALLBACK: OpsMetrics = {
+  requests_per_sec: 0,
+  queue_length: 0,
+  active_lanes: 4,
+  total_lanes: 4,
+  surge_score: 0.1,
+  lite_mode: false,
+  notification_queued: 0,
+  notification_retries: 0,
+  dead_letter_count: 0,
+  circuit_state: "closed",
+  worker_status: "healthy",
+  active_worker_count: 1,
+  active_users: 0,
+  successful_registrations: 0,
+  failed_registrations: 0,
+  queue_processing_rate_per_min: 0,
+  pending_jobs: 0,
+  retry_count: 0,
+  avg_response_time_ms: 0,
+  p95_latency_ms: 0,
+  p99_latency_ms: 0,
+  seats_remaining: 0,
+  cpu_percent: null,
+  memory_used_mb: null,
+  memory_total_mb: null,
+  active_instances: null,
+  min_instances: null,
+  max_instances: null,
+  autoscaling_status: "stable",
+  autoscaling_note: "Waiting for first worker heartbeat…",
+};
+
+export async function getOpsMetrics(eventId: string): Promise<OpsMetrics> {
   try {
     const { data, error } = await supabase.rpc("get_ops_metrics", { p_event_id: eventId });
     if (error) throw error;
-    return data as {
-      requests_per_sec: number;
-      queue_length: number;
-      active_lanes: number;
-      total_lanes: number;
-      surge_score: number | null;
-      lite_mode: boolean;
-      notification_queued: number;
-      notification_retries: number;
-      dead_letter_count: number;
-      circuit_state: "closed" | "open" | "half_open";
-      worker_status: "healthy" | "down";
-      active_worker_count: number;
-    };
+    return { ...OPS_METRICS_FALLBACK, ...(data as Partial<OpsMetrics>) };
   } catch {
-    // Graceful default if RPC is initializing
-    return {
-      requests_per_sec: 0,
-      queue_length: 0,
-      active_lanes: 4,
-      total_lanes: 4,
-      surge_score: 0.1,
-      lite_mode: false,
-      notification_queued: 0,
-      notification_retries: 0,
-      dead_letter_count: 0,
-      circuit_state: "closed" as const,
-      worker_status: "healthy" as const,
-      active_worker_count: 1,
-    };
+    // Graceful default if RPC is initializing (e.g. migration not applied yet).
+    return OPS_METRICS_FALLBACK;
   }
+}
+
+export type ActiveAlert = {
+  severity: "critical" | "warning";
+  code: string;
+  message: string;
+};
+
+export async function getActiveAlerts(eventId: string): Promise<ActiveAlert[]> {
+  try {
+    const { data, error } = await supabase.rpc("get_active_alerts", { p_event_id: eventId });
+    if (error) throw error;
+    return (data as ActiveAlert[]) ?? [];
+  } catch (err) {
+    console.warn("getActiveAlerts error:", err);
+    return [];
+  }
+}
+
+export type DeadLetterJob = {
+  id: string;
+  job_type: string;
+  payload: Record<string, unknown>;
+  priority: number;
+  attempts: number;
+  max_attempts: number;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export async function getDeadLetterJobs(limit = 50): Promise<DeadLetterJob[]> {
+  try {
+    const { data, error } = await supabase.rpc("get_dead_letter_jobs", { p_limit: limit });
+    if (error) throw error;
+    return (data as DeadLetterJob[]) ?? [];
+  } catch (err) {
+    console.warn("getDeadLetterJobs error:", err);
+    return [];
+  }
+}
+
+export async function reprocessDeadLetterJob(jobId: string) {
+  const { data, error } = await supabase.rpc("reprocess_dead_letter_job", { p_job_id: jobId });
+  if (error) throw error;
+  return data;
 }
 
 export function subscribeSystemStatus(eventId: string, onChange: (litemode: boolean, reason: string | null) => void) {

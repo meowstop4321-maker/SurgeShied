@@ -1,16 +1,35 @@
 import React, { useEffect, useState } from "react";
-import { CircleDot, Cpu, RefreshCw } from "lucide-react";
-import { getOpsMetrics, listEvents } from "../lib/api";
+import { CircleDot, Cpu, RefreshCw, TrendingUp, TrendingDown, Minus, MemoryStick } from "lucide-react";
+import { getOpsMetrics, getActiveAlerts, listEvents, OpsMetrics, ActiveAlert } from "../lib/api";
 import { LiteModeBanner } from "../components/LiteModeBanner";
 import { MetricTile } from "../components/OperationsDashboard/MetricTile";
 import { SurgeGauge } from "../components/OperationsDashboard/SurgeGauge";
 import { PartitionBoard } from "../components/OperationsDashboard/PartitionBoard";
 import { LiveAuditLogTable } from "../components/OperationsDashboard/LiveAuditLogTable";
+import { LiveLogConsole } from "../components/OperationsDashboard/LiveLogConsole";
+import { DeadLetterQueuePanel } from "../components/OperationsDashboard/DeadLetterQueuePanel";
+import { AlertBanners } from "../components/OperationsDashboard/AlertBanners";
+import { SystemHealthStrip } from "../components/OperationsDashboard/SystemHealthStrip";
 import { TrustCard } from "../components/TrustCard";
 import { SimulationPanel } from "../components/SimulationPanel";
 import { LogExplainerCard } from "../components/LogExplainerCard";
 
 const POLL_MS = 3000;
+const HISTORY_LEN = 20;
+
+// The handful of tiles worth trending — enough to show direction of travel
+// without turning every stat into a chart (per the dataviz method: a
+// sparkline earns its place only where "is this climbing?" is the question).
+const HISTORY_KEYS = [
+  "active_users",
+  "requests_per_sec",
+  "successful_registrations",
+  "queue_length",
+  "avg_response_time_ms",
+  "cpu_percent",
+] as const;
+type HistoryKey = (typeof HISTORY_KEYS)[number];
+type MetricHistory = Partial<Record<HistoryKey, number[]>>;
 
 const circuitColor: Record<string, string> = {
   closed: "text-emerald-400",
@@ -18,11 +37,53 @@ const circuitColor: Record<string, string> = {
   half_open: "text-amber-400",
 };
 
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mt-2">{children}</h2>;
+}
+
+function AutoscalingValue({ metrics }: { metrics: OpsMetrics }) {
+  const icon =
+    metrics.autoscaling_status === "scaling_up" ? (
+      <TrendingUp size={16} className="text-emerald-400" />
+    ) : metrics.autoscaling_status === "scaling_down" ? (
+      <TrendingDown size={16} className="text-amber-400" />
+    ) : (
+      <Minus size={16} className="text-slate-400" />
+    );
+  const label =
+    metrics.autoscaling_status === "scaling_up" ? "Scaling Up" : metrics.autoscaling_status === "scaling_down" ? "Scaling Down" : "Stable";
+  return (
+    <span className="flex items-center gap-1.5">
+      {icon} {label}
+    </span>
+  );
+}
+
+// Builds the {trend, delta} props for a MetricTile from the rolling
+// history — one place that decides "is the direction good, bad, or
+// neutral" per metric, instead of repeating that judgment call at every
+// call site.
+function trendProps(
+  history: MetricHistory,
+  key: HistoryKey,
+  opts?: { goodDirection?: "up" | "down"; format?: (v: number) => string }
+) {
+  const h = history[key];
+  if (!h || h.length < 1) return {};
+  if (h.length < 2) return { trend: h };
+  const value = h[h.length - 1] - h[h.length - 2];
+  return { trend: h, delta: { value, goodDirection: opts?.goodDirection, format: opts?.format } };
+}
+
+const fmtMs = (v: number) => `${v > 0 ? "+" : ""}${Math.round(v)}ms`;
+const fmtPct = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(0)}%`;
+
 export function OperationsDashboard() {
   const [events, setEvents] = useState<{ id: string; title: string }[]>([]);
   const [eventId, setEventId] = useState<string | null>(null);
-  const [metrics, setMetrics] = useState<Awaited<ReturnType<typeof getOpsMetrics>> | null>(null);
-  const [queueHistory, setQueueHistory] = useState<number[]>([]);
+  const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
+  const [alerts, setAlerts] = useState<ActiveAlert[]>([]);
+  const [history, setHistory] = useState<MetricHistory>({});
 
   useEffect(() => {
     listEvents().then((data) => {
@@ -36,11 +97,24 @@ export function OperationsDashboard() {
     let cancelled = false;
     async function tick() {
       try {
-        const m = await getOpsMetrics(eventId!);
-        if (!cancelled) {
-          setMetrics(m);
-          setQueueHistory((h) => [...h.slice(-29), m.queue_length]);
-        }
+        // Metrics and alerts are fetched together on every tick so every
+        // component on this page (health strip, banners, tiles) is always
+        // looking at the same moment in time instead of drifting apart
+        // across separate polling loops.
+        const [m, a] = await Promise.all([getOpsMetrics(eventId!), getActiveAlerts(eventId!)]);
+        if (cancelled) return;
+        setMetrics(m);
+        setAlerts(a);
+        setHistory((h) => {
+          const next: MetricHistory = { ...h };
+          HISTORY_KEYS.forEach((k) => {
+            const v = m[k];
+            if (typeof v === "number") {
+              next[k] = [...(h[k] ?? []).slice(-(HISTORY_LEN - 1)), v];
+            }
+          });
+          return next;
+        });
       } catch (err) {
         console.error(err);
       }
@@ -78,7 +152,12 @@ export function OperationsDashboard() {
         )}
       </div>
 
+      {/* The one-second answer to "is everything OK?" — comes first, above
+          even the lite-mode banner, so it's the very first thing read. */}
+      {metrics && <SystemHealthStrip metrics={metrics} alerts={alerts} />}
+
       {eventId && <LiteModeBanner eventId={eventId} />}
+      <AlertBanners alerts={alerts} />
 
       {!metrics ? (
         <div className="rounded-xl border border-white/10 bg-slate-900/40 p-12 text-center text-slate-400">
@@ -87,37 +166,125 @@ export function OperationsDashboard() {
         </div>
       ) : (
         <div className="space-y-6">
+          {/* Traffic & Registrations */}
+          <SectionLabel>Traffic & Registrations</SectionLabel>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <MetricTile label="Requests/sec" value={metrics.requests_per_sec.toFixed(1)} />
             <MetricTile
-              label="Queue length"
-              value={
-                <div className="flex items-baseline justify-between gap-3">
-                  <span>{metrics.queue_length}</span>
-                  {queueHistory.length > 1 && (
-                    <div className="flex items-end gap-0.5 h-6 w-20">
-                      {queueHistory.map((val, idx) => {
-                        const max = Math.max(...queueHistory, 1);
-                        const heightPct = Math.max(15, Math.round((val / max) * 100));
-                        return (
-                          <div
-                            key={idx}
-                            className={`flex-1 rounded-t transition-all duration-300 ${
-                              val > 20 ? "bg-amber-400/80" : val > 0 ? "bg-teal-400/70" : "bg-white/10"
-                            }`}
-                            style={{ height: `${heightPct}%` }}
-                          />
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              }
+              label="Active Users (60s)"
+              value={metrics.active_users}
+              {...trendProps(history, "active_users")}
+            />
+            <MetricTile
+              label="Requests/sec"
+              value={metrics.requests_per_sec.toFixed(1)}
+              {...trendProps(history, "requests_per_sec")}
+            />
+            <MetricTile
+              label="Successful Registrations"
+              value={metrics.successful_registrations}
+              accent="teal"
+              {...trendProps(history, "successful_registrations", { goodDirection: "up" })}
+            />
+            <MetricTile
+              label="Failed Registrations"
+              value={metrics.failed_registrations}
+              accent={metrics.failed_registrations > 0 ? "rose" : "default"}
+            />
+          </div>
+
+          {/* Queue & Job Processing */}
+          <SectionLabel>Queue & Job Processing</SectionLabel>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <MetricTile
+              label="Queue size"
+              value={metrics.queue_length}
               accent={metrics.queue_length > 20 ? "amber" : "default"}
+              {...trendProps(history, "queue_length", { goodDirection: "down" })}
+            />
+            <MetricTile
+              label="Queue processing rate"
+              value={`${metrics.queue_processing_rate_per_min}/min`}
+              sub="promotions in last 60s"
+            />
+            <MetricTile label="Pending jobs" value={metrics.pending_jobs} />
+            <MetricTile
+              label="Retry count"
+              value={metrics.retry_count}
+              accent={metrics.retry_count > 0 ? "amber" : "default"}
             />
             <MetricTile label="Active lanes" value={`${metrics.active_lanes} / ${metrics.total_lanes}`} />
             <SurgeGauge score={metrics.surge_score} />
+            <MetricTile
+              label="Seats remaining"
+              value={metrics.seats_remaining}
+              accent={metrics.seats_remaining === 0 ? "rose" : "default"}
+            />
+            <MetricTile
+              label="Dead letter count"
+              value={metrics.dead_letter_count}
+              accent={metrics.dead_letter_count > 0 ? "rose" : "default"}
+            />
+          </div>
 
+          {/* Latency & Performance */}
+          <SectionLabel>Latency & Performance</SectionLabel>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <MetricTile
+              label="Avg response time"
+              value={`${metrics.avg_response_time_ms} ms`}
+              {...trendProps(history, "avg_response_time_ms", { goodDirection: "down", format: fmtMs })}
+            />
+            <MetricTile
+              label="P95 latency"
+              value={`${metrics.p95_latency_ms} ms`}
+              accent={metrics.p95_latency_ms > 3000 ? "amber" : "default"}
+            />
+            <MetricTile
+              label="P99 latency"
+              value={`${metrics.p99_latency_ms} ms`}
+              accent={metrics.p99_latency_ms > 5000 ? "amber" : "default"}
+            />
+            <MetricTile
+              label="CPU usage"
+              value={
+                <span className="flex items-center gap-1.5">
+                  <Cpu size={16} className="text-slate-400" />
+                  {metrics.cpu_percent != null ? `${metrics.cpu_percent}%` : "—"}
+                </span>
+              }
+              accent={metrics.cpu_percent != null && metrics.cpu_percent > 85 ? "amber" : "default"}
+              {...trendProps(history, "cpu_percent", { goodDirection: "down", format: fmtPct })}
+            />
+            <MetricTile
+              label="Memory usage"
+              value={
+                <span className="flex items-center gap-1.5">
+                  <MemoryStick size={16} className="text-slate-400" />
+                  {metrics.memory_used_mb != null ? `${Math.round(metrics.memory_used_mb)} MB` : "—"}
+                </span>
+              }
+              sub={metrics.memory_total_mb != null ? `of ${Math.round(metrics.memory_total_mb)} MB` : undefined}
+            />
+          </div>
+
+          {/* Infrastructure & Scaling */}
+          <SectionLabel>Infrastructure & Scaling</SectionLabel>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <MetricTile
+              label="Active instances"
+              value={metrics.active_instances ?? "—"}
+              sub={
+                metrics.min_instances != null && metrics.max_instances != null
+                  ? `range ${metrics.min_instances}–${metrics.max_instances}`
+                  : undefined
+              }
+            />
+            <MetricTile
+              label="Autoscaling status"
+              value={<AutoscalingValue metrics={metrics} />}
+              sub={metrics.autoscaling_note}
+              accent={metrics.autoscaling_status === "scaling_up" ? "teal" : "default"}
+            />
             <MetricTile
               label="Circuit Guardian"
               value={
@@ -146,16 +313,15 @@ export function OperationsDashboard() {
               value={metrics.notification_retries}
               sub={`${metrics.notification_queued} queued`}
             />
-            <MetricTile
-              label="Dead letter count"
-              value={metrics.dead_letter_count}
-              accent={metrics.dead_letter_count > 0 ? "rose" : "default"}
-            />
           </div>
 
           <TrustCard />
 
           {eventId && <PartitionBoard eventId={eventId} />}
+
+          <LiveLogConsole eventId={eventId ?? undefined} />
+
+          <DeadLetterQueuePanel />
 
           {eventId && <LogExplainerCard eventId={eventId} />}
 

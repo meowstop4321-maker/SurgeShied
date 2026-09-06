@@ -1,4 +1,6 @@
 import express from "express";
+import cors from "cors";
+import os from "node:os";
 import { createClient } from "@supabase/supabase-js";
 import { createHmac } from "node:crypto";
 import fs from "node:fs";
@@ -41,6 +43,7 @@ const PUBSUB_PUSH_TOKEN = process.env.PUBSUB_PUSH_TOKEN;
 const SEAT_PASSPORT_SECRET = process.env.SEAT_PASSPORT_SECRET;
 const PASSPORT_TTL_SECONDS = 2 * 60; // 2-minute booking window
 const GHOST_SEAT_SWEEP_MS = 20_000; // 20s sweep interval
+const LANE_REBALANCE_SWEEP_MS = 30_000; // dynamic (elastic) surge partitions sweep
 const HEARTBEAT_MS = 20_000;
 const WORKER_ID = process.env.K_REVISION || `local-${crypto.randomUUID()}`;
 
@@ -121,13 +124,84 @@ async function ghostSeatSweep() {
   await finishPromotions();
 }
 
-// --- Worker Heartbeat ------------------------------------------------------
+// --- Dynamic (Elastic) Surge Partitions: scale-down sweep -------------------
+// register.ts triggers rebalance_lanes() on the hot path, but only while a
+// request is actively coming in — so it can grow the lane count during a
+// burst, but there's no "quiet" request left to run the code that shrinks
+// it back down once traffic stops. This sweep is what closes that loop:
+// it periodically asks every open event whether it can consolidate lanes,
+// and rebalance_lanes()'s own cooldown (45s since the last scale event)
+// keeps it from undoing a split that a following burst would just need
+// again.
+async function laneRebalanceSweep() {
+  const { data: openEvents, error } = await admin
+    .from("events")
+    .select("id")
+    .eq("registration_open", true);
+  if (error) {
+    console.error("[LaneRebalance] failed to list open events:", error.message);
+    return;
+  }
+  for (const ev of openEvents ?? []) {
+    try {
+      const { data, error: rebalanceError } = await admin.rpc("rebalance_lanes", { p_event_id: ev.id });
+      if (rebalanceError) {
+        console.error(`[LaneRebalance] event ${ev.id} failed:`, rebalanceError.message);
+        continue;
+      }
+      if (data?.rebalanced) {
+        console.log(`[LaneRebalance] event ${ev.id}: ${data.action} (${data.current_lanes} -> ${data.target_lanes} lanes)`);
+      }
+    } catch (err) {
+      console.error(`[LaneRebalance] event ${ev.id} threw:`, err.message);
+    }
+  }
+}
+
+// --- Worker Heartbeat -------------------------------------------------------
+// Real process-level telemetry (this Node process, not a cluster) reported
+// on the existing 20s heartbeat cadence. The dashboard has no way to reach
+// this process directly (no CORS-enabled public URL is guaranteed to be
+// configured, and the worker may not be running for a given demo at all),
+// so metrics are PUSHED into Postgres here rather than pulled over HTTP —
+// see 0011_observability.sql's upsert_worker_heartbeat().
+let lastCpuUsage = process.cpuUsage();
+let lastCpuSampleAt = Date.now();
+
+function sampleCpuPercent() {
+  const now = Date.now();
+  const elapsedMs = now - lastCpuSampleAt;
+  const usage = process.cpuUsage(lastCpuUsage); // delta since last sample
+  lastCpuUsage = process.cpuUsage();
+  lastCpuSampleAt = now;
+  if (elapsedMs <= 0) return 0;
+  const usedMicros = usage.user + usage.system;
+  const percent = (usedMicros / (elapsedMs * 1000)) * 100;
+  return Math.max(0, Math.round(percent * 10) / 10);
+}
+
 async function heartbeat() {
-  await admin.rpc("upsert_worker_heartbeat", { p_worker_id: WORKER_ID, p_status: "healthy" });
+  const cpuPercent = sampleCpuPercent();
+  const mem = process.memoryUsage();
+  const stats = workerManager.getStats();
+  await admin.rpc("upsert_worker_heartbeat", {
+    p_worker_id: WORKER_ID,
+    p_status: "healthy",
+    p_cpu_percent: cpuPercent,
+    p_memory_used_mb: Math.round((mem.rss / 1024 / 1024) * 10) / 10,
+    p_memory_total_mb: Math.round((os.totalmem() / 1024 / 1024) * 10) / 10,
+    p_active_workers: stats.currentWorkers,
+    p_min_workers: stats.minWorkers,
+    p_max_workers: stats.maxWorkers,
+  });
 }
 
 // --- Express HTTP Telemetry & Ops API --------------------------------------
 const app = express();
+// CORS so a directly-configured VITE_WORKER_URL (optional — the DB-pushed
+// heartbeat above is the primary telemetry path and needs no CORS at all)
+// can still reach /health and /manager/stats from a browser origin.
+app.use(cors());
 app.use(express.json());
 
 // Auth middleware for administrative/job routes
@@ -194,6 +268,17 @@ app.post("/manager/scale", requireWorkerAuth, (req, res) => {
   res.status(200).json({ status: "ok", config: { minWorkers: workerManager.minWorkers, maxWorkers: workerManager.maxWorkers } });
 });
 
+// Manual trigger for the lane rebalance sweep (handy for demos / tests
+// instead of waiting up to LANE_REBALANCE_SWEEP_MS for the timer).
+app.post("/lanes/rebalance", requireWorkerAuth, async (_req, res) => {
+  try {
+    await laneRebalanceSweep();
+    res.status(200).json({ status: "ok" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Pub/Sub Push Subscription Endpoint (bridges push hints directly into unified WorkerManager)
 app.post("/pubsub/notification-jobs", async (req, res) => {
   if (PUBSUB_PUSH_TOKEN && req.query.token !== PUBSUB_PUSH_TOKEN) {
@@ -203,7 +288,7 @@ app.post("/pubsub/notification-jobs", async (req, res) => {
     const dataB64 = req.body?.message?.data;
     if (!dataB64) return res.status(204).send();
     const payload = JSON.parse(Buffer.from(dataB64, "base64").toString("utf8"));
-    
+
     // Enqueue with High Priority (8) into WorkerManager
     await workerManager.enqueue("confirmation_email", payload, 8);
     res.status(204).send();
@@ -215,12 +300,13 @@ app.post("/pubsub/notification-jobs", async (req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`🛡️ SurgeShield Worker ${WORKER_ID} listening on ${PORT}`);
-  
+
   // Start WorkerManager autoscaling pool (single source of truth for job execution)
   workerManager.start();
 
   // Periodic recovery & heartbeat timers
   setInterval(() => ghostSeatSweep().catch(console.error), GHOST_SEAT_SWEEP_MS);
+  setInterval(() => laneRebalanceSweep().catch(console.error), LANE_REBALANCE_SWEEP_MS);
   setInterval(() => heartbeat().catch(console.error), HEARTBEAT_MS);
   heartbeat().catch(console.error);
 });
