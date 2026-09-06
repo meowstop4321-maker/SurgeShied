@@ -9,7 +9,8 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM = process.env.RESEND_FROM || "SurgeShield <onboarding@resend.dev>";
 const PUBSUB_PUSH_TOKEN = process.env.PUBSUB_PUSH_TOKEN; // shared-secret query param, see scripts/setup-pubsub.sh
 const SEAT_PASSPORT_SECRET = process.env.SEAT_PASSPORT_SECRET; // same secret the edge functions use
-const PASSPORT_TTL_SECONDS = 10 * 60;
+const PASSPORT_TTL_SECONDS = 2 * 60; // 2-minute booking allotment
+const GHOST_SEAT_SWEEP_MS = 20_000; // 20s sweep window for fast ghost seat reclamation
 const WORKER_ID = process.env.K_REVISION || `local-${crypto.randomUUID()}`;
 
 const MAX_ATTEMPTS = 5;
@@ -17,7 +18,6 @@ const BASE_BACKOFF_MS = 5_000;
 const CIRCUIT_FAILURE_THRESHOLD = 3;
 const CIRCUIT_COOLDOWN_MS = 30_000;
 
-const GHOST_SEAT_SWEEP_MS = 45_000; // within the requested 30–60s window
 const SELF_HEAL_SWEEP_MS = 20_000; // catches jobs whose Pub/Sub push never arrived
 const HEARTBEAT_MS = 20_000;
 

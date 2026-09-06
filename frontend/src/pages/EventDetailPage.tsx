@@ -190,30 +190,48 @@ export const EventDetailPage: React.FC = () => {
 
         {/* Existing Registration Info banner */}
         {existingReg && (
-          <div className="p-4 rounded-xl border border-teal-500/30 bg-teal-950/20 flex flex-wrap items-center justify-between gap-3">
-            <div className="space-y-0.5">
-              <p className="text-xs font-semibold text-teal-300">Seat Passport Active</p>
-              <p className="text-[11px] font-mono text-slate-400">
-                Assigned Lane #{existingReg.lane_index} · Hash-Chained in Ledger
-              </p>
+          <div className="p-5 rounded-2xl border border-teal-500/30 bg-teal-950/20 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-bold text-teal-300">Seat Passport Active</p>
+                  <span className="px-2 py-0.5 text-[10px] font-mono rounded bg-teal-500/20 text-teal-300 border border-teal-500/30">
+                    2 min allotment (max 6 min)
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300">
+                  Assigned Lane #{existingReg.lane_index} · SHA-256 Ledger Verified · No-Switching Locked
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <a
+                  href={createGoogleCalendarUrl(calEvent)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 transition-colors flex items-center gap-1.5"
+                >
+                  <Calendar size={13} />
+                  <span>Google Cal</span>
+                </a>
+                <button
+                  onClick={() => downloadICSFile(calEvent)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 transition-colors flex items-center gap-1.5"
+                >
+                  <Download size={13} />
+                  <span>.ICS</span>
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <a
-                href={createGoogleCalendarUrl(calEvent)}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 transition-colors flex items-center gap-1.5"
-              >
-                <Calendar size={13} />
-                <span>Google Cal</span>
-              </a>
-              <button
-                onClick={() => downloadICSFile(calEvent)}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/5 hover:bg-white/10 text-slate-200 border border-white/10 transition-colors flex items-center gap-1.5"
-              >
-                <Download size={13} />
-                <span>.ICS</span>
-              </button>
+
+            <div className="bg-black/30 p-2.5 rounded-xl border border-white/5 flex items-center justify-between text-xs">
+              <span className="text-slate-400 flex items-center gap-1.5">
+                <Clock size={14} className="text-teal-400" />
+                <span>Reservation Claim:</span>
+              </span>
+              <span className="text-teal-300 font-mono font-semibold">
+                Protected by Ghost Seat Recovery
+              </span>
             </div>
           </div>
         )}
