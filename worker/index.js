@@ -136,6 +136,28 @@ app.use((req, res, next) => {
   next();
 });
 
+// Auth middleware for administrative/job routes
+const requireWorkerAuth = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  const workerSecretHeader = req.headers["x-worker-secret"];
+  const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+  const providedToken = bearerToken || workerSecretHeader || req.query.token;
+
+  const validTokens = [
+    process.env.WORKER_SECRET,
+    SERVICE_ROLE_KEY,
+    PUBSUB_PUSH_TOKEN,
+  ].filter(Boolean);
+
+  // If credentials are configured, enforce matching token
+  if (validTokens.length > 0) {
+    if (!providedToken || !validTokens.includes(providedToken)) {
+      return res.status(401).json({ error: "Unauthorized: valid worker token or service role key required" });
+    }
+  }
+  next();
+};
+
 app.get("/health", (_req, res) => res.status(200).json({ status: "ok", worker_id: WORKER_ID }));
 
 // Telemetry & scaling stats for Operations Dashboard
@@ -173,7 +195,7 @@ app.get("/jobs/status", async (_req, res) => {
   }
 });
 
-app.post("/jobs/enqueue", async (req, res) => {
+app.post("/jobs/enqueue", requireWorkerAuth, async (req, res) => {
   try {
     const { job_type, payload, priority, scheduled_at } = req.body;
     if (!job_type) {
@@ -191,7 +213,7 @@ app.post("/jobs/enqueue", async (req, res) => {
   }
 });
 
-app.post("/manager/scale", (req, res) => {
+app.post("/manager/scale", requireWorkerAuth, (req, res) => {
   const { minWorkers, maxWorkers } = req.body;
   if (typeof minWorkers === "number") workerManager.minWorkers = Math.max(1, minWorkers);
   if (typeof maxWorkers === "number") workerManager.maxWorkers = Math.max(workerManager.minWorkers, maxWorkers);

@@ -5,7 +5,7 @@
 create extension if not exists "pgcrypto";
 
 -- 1. Profiles (extends Supabase auth.users)
-create table profiles (
+create table if not exists profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   role text not null check (role in ('organizer', 'attendee')) default 'attendee',
   full_name text,
@@ -13,7 +13,7 @@ create table profiles (
 );
 
 -- 2. Events
-create table events (
+create table if not exists events (
   id uuid primary key default gen_random_uuid(),
   organizer_id uuid not null references profiles(id) on delete cascade,
   title text not null,
@@ -26,7 +26,7 @@ create table events (
 );
 
 -- 3. Seat partitions — one row per (event, lane). This row is the lock target.
-create table seat_partitions (
+create table if not exists seat_partitions (
   id uuid primary key default gen_random_uuid(),
   event_id uuid not null references events(id) on delete cascade,
   lane_index integer not null,
@@ -37,7 +37,7 @@ create table seat_partitions (
 );
 
 -- 4. Registrations
-create table registrations (
+create table if not exists registrations (
   id uuid primary key default gen_random_uuid(),
   event_id uuid not null references events(id) on delete cascade,
   user_id uuid not null references profiles(id) on delete cascade,
@@ -49,11 +49,11 @@ create table registrations (
   created_at timestamptz not null default now(),
   confirmed_at timestamptz
 );
-create index registrations_event_status_idx on registrations(event_id, status);
-create index registrations_expiry_idx on registrations(seat_passport_expires_at) where status = 'pending';
+create index if not exists registrations_event_status_idx on registrations(event_id, status);
+create index if not exists registrations_expiry_idx on registrations(seat_passport_expires_at) where status = 'pending';
 
 -- 5. Idempotency keys — dedupe registration requests from double-clicks/retries
-create table idempotency_keys (
+create table if not exists idempotency_keys (
   key text primary key,
   request_hash text not null,
   response jsonb,
@@ -61,7 +61,7 @@ create table idempotency_keys (
 );
 
 -- 6. Notification jobs — self-healing notification pipeline state
-create table notification_jobs (
+create table if not exists notification_jobs (
   id uuid primary key default gen_random_uuid(),
   registration_id uuid not null references registrations(id) on delete cascade,
   job_type text not null default 'confirmation_email',
@@ -74,7 +74,7 @@ create table notification_jobs (
 );
 
 -- 7. Audit log
-create table audit_logs (
+create table if not exists audit_logs (
   id uuid primary key default gen_random_uuid(),
   actor_id uuid references profiles(id),
   action text not null,
@@ -733,17 +733,11 @@ create index if not exists idx_job_queue_type_status
 -- Enable RLS
 alter table public.job_queue enable row level security;
 
-create policy "job_queue: select all" on public.job_queue
-  for select using (true);
+create policy "job_queue: service_role full access" on public.job_queue
+  for all to service_role using (true) with check (true);
 
-create policy "job_queue: insert all" on public.job_queue
-  for insert with check (true);
-
-create policy "job_queue: update all" on public.job_queue
-  for update using (true);
-
-create policy "job_queue: delete all" on public.job_queue
-  for delete using (true);
+create policy "job_queue: authenticated select" on public.job_queue
+  for select to authenticated using (true);
 
 -- Atomic job claiming using Postgres FOR UPDATE SKIP LOCKED
 create or replace function public.claim_job_batch(
@@ -917,10 +911,11 @@ as $$
 $$;
 
 -- Permissions
-grant all on public.job_queue to postgres, anon, authenticated, service_role;
-grant execute on function public.claim_job_batch(text, integer, text[], integer) to postgres, anon, authenticated, service_role;
-grant execute on function public.enqueue_job(text, jsonb, integer, timestamptz, integer) to postgres, anon, authenticated, service_role;
-grant execute on function public.complete_job(uuid, jsonb) to postgres, anon, authenticated, service_role;
-grant execute on function public.fail_job(uuid, text, integer) to postgres, anon, authenticated, service_role;
-grant execute on function public.get_job_queue_depth() to postgres, anon, authenticated, service_role;
+grant select on public.job_queue to postgres, authenticated, service_role;
+grant all on public.job_queue to postgres, service_role;
+grant execute on function public.claim_job_batch(text, integer, text[], integer) to postgres, service_role;
+grant execute on function public.enqueue_job(text, jsonb, integer, timestamptz, integer) to postgres, authenticated, service_role;
+grant execute on function public.complete_job(uuid, jsonb) to postgres, service_role;
+grant execute on function public.fail_job(uuid, text, integer) to postgres, service_role;
+grant execute on function public.get_job_queue_depth() to postgres, authenticated, service_role;
 

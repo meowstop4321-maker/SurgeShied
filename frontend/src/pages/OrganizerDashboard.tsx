@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Plus, Calendar, Users, ShieldCheck, ToggleLeft, ToggleRight, Loader2 } from "lucide-react";
+import { Plus, Calendar, Users, ShieldCheck, ToggleLeft, ToggleRight, Loader2, AlertCircle } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { useAuth } from "../lib/auth";
 
@@ -8,6 +8,7 @@ export const OrganizerDashboard: React.FC = () => {
   const [events, setEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Form state
   const [title, setTitle] = useState("");
@@ -37,10 +38,31 @@ export const OrganizerDashboard: React.FC = () => {
     e.preventDefault();
     if (!user) return;
     setCreating(true);
+    setFormError(null);
 
     try {
       const laneCount = 4; // Automatically partitioned behind the scenes
       const dateVal = startsAt ? new Date(startsAt).toISOString() : new Date(Date.now() + 86400000 * 7).toISOString();
+      
+      // 1. Try atomic create_event_with_partitions RPC
+      const { data: rpcEvent, error: rpcErr } = await supabase.rpc("create_event_with_partitions", {
+        p_title: title,
+        p_description: description,
+        p_capacity: capacity,
+        p_lane_count: laneCount,
+        p_starts_at: dateVal,
+      });
+
+      if (!rpcErr && rpcEvent) {
+        setTitle("");
+        setDescription("");
+        setCapacity(500);
+        setStartsAt("");
+        await loadOrganizerEvents();
+        return;
+      }
+
+      // 2. Direct insert fallback
       const { data: newEvent, error: evErr } = await supabase
         .from("events")
         .insert({
@@ -57,7 +79,6 @@ export const OrganizerDashboard: React.FC = () => {
 
       if (evErr) throw evErr;
 
-      // Automatically seed background partitions
       if (newEvent) {
         const laneCap = Math.floor(capacity / laneCount);
         const partitionsToInsert = [];
@@ -71,16 +92,16 @@ export const OrganizerDashboard: React.FC = () => {
         }
         await supabase.from("seat_partitions").insert(partitionsToInsert);
 
-        // Append audit log
-        await supabase.rpc("append_audit_log", {
-          p_actor_id: user.id,
-          p_action: "event_created",
-          p_entity: "event",
-          p_entity_id: newEvent.id,
-          p_metadata: { title, capacity, lane_count: laneCount },
-        });
+        try {
+          await supabase.rpc("append_audit_log", {
+            p_actor_id: user.id,
+            p_action: "event_created",
+            p_entity: "event",
+            p_entity_id: newEvent.id,
+            p_metadata: { title, capacity, lane_count: laneCount },
+          });
+        } catch {}
 
-        // Reset form
         setTitle("");
         setDescription("");
         setCapacity(500);
@@ -88,7 +109,7 @@ export const OrganizerDashboard: React.FC = () => {
         await loadOrganizerEvents();
       }
     } catch (err: any) {
-      alert(err.message || "Failed to create event. (Make sure complete_schema.sql has been executed in Supabase SQL Editor).");
+      setFormError(err.message || "Failed to create event. Make sure migration 0009 has been executed in Supabase SQL Editor.");
     } finally {
       setCreating(false);
     }
@@ -121,6 +142,12 @@ export const OrganizerDashboard: React.FC = () => {
           </div>
 
           <form onSubmit={handleCreateEvent} className="space-y-4">
+            {formError && (
+              <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
+                <AlertCircle size={15} className="shrink-0" />
+                <span>{formError}</span>
+              </div>
+            )}
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">Event Title</label>
               <input

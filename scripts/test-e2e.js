@@ -5,11 +5,47 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { createHmac } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 
-const SUPABASE_URL = process.env.SUPABASE_URL || "https://uyafreiwfuansdfacxye.supabase.co";
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV5YWZyZWl3ZnVhbnNkZmFjeHllIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4ODY4NDgxMywiZXhwIjoyMTA0MjYwODEzfQ.LigDz_bWXBil3Sh_b1Uyh_FjleZjzwrLvXVRMaZghUs";
-const ANON_KEY = process.env.SUPABASE_ANON_KEY || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InV5YWZyZWl3ZnVhbnNkZmFjeHllIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg2ODQ4MTMsImV4cCI6MjEwNDI2MDgxM30.k4qO0PpPYwy2Va3T6QKB4_tqK7uaNY5Wzx-GhWwnNJE";
-const SEAT_PASSPORT_SECRET = process.env.SEAT_PASSPORT_SECRET || "39e833befa03f28115244035b10f79ad41c8a17a263a378fc76a225ffdf3adec";
+// Auto-load .env for testing if not set in environment
+const envPaths = [
+  path.resolve(process.cwd(), ".env"),
+  path.resolve(process.cwd(), "worker", ".env"),
+  path.resolve(process.cwd(), "..", ".env"),
+];
+for (const p of envPaths) {
+  if (fs.existsSync(p)) {
+    try {
+      const content = fs.readFileSync(p, "utf-8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+        const eqIdx = trimmed.indexOf("=");
+        if (eqIdx !== -1) {
+          const key = trimmed.slice(0, eqIdx).trim();
+          const val = trimmed.slice(eqIdx + 1).trim().replace(/^["']|["']$/g, "");
+          if (key && !process.env[key]) process.env[key] = val;
+        }
+      }
+    } catch {}
+  }
+}
+
+function requireEnv(name) {
+  const v = process.env[name];
+  if (!v) {
+    console.error(`\x1b[31mMissing required env var: ${name}\x1b[0m`);
+    console.error("Refusing to run with a hardcoded fallback. Set it and re-run.");
+    process.exit(1);
+  }
+  return v;
+}
+
+const SUPABASE_URL = requireEnv("SUPABASE_URL");
+const SERVICE_ROLE_KEY = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
+const ANON_KEY = requireEnv("SUPABASE_ANON_KEY");
+const SEAT_PASSPORT_SECRET = process.env.SEAT_PASSPORT_SECRET || "surgeshield_demo_secret_2026_test_only";
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 const client = createClient(SUPABASE_URL, ANON_KEY);
@@ -186,7 +222,7 @@ async function runTests() {
 
     // Run Ghost Seat Sweep
     const { data: releasedCount, error: sweepErr } = await admin.rpc("release_expired_seats");
-    assert(!sweepErr, "4.1 Ghost Seat Recovery sweeps and releases abandoned seat", `Released: ${releasedCount ?? 1} seat(s)`);
+    assert(!sweepErr && (releasedCount ?? 0) >= 0, "4.1 Ghost Seat Recovery sweeps and releases abandoned seat", sweepErr ? sweepErr.message : `Released: ${releasedCount} seat(s)`);
 
     // Verify queue promotion
     const { data: promotedEntry } = await admin.from("queue_entries")

@@ -32,9 +32,13 @@ export async function issueSeatPassport(
   const data = `${encodedHeader}.${encodedPayload}`;
 
   const enc = new TextEncoder();
+  const signingKey = secret || (typeof Deno !== "undefined" && Deno.env.get("DEMO_MODE") === "true" ? "surgeshield-demo-secret-key" : "");
+  if (!signingKey) {
+    throw new Error("SEAT_PASSPORT_SECRET is required to issue seat passports");
+  }
   const key = await crypto.subtle.importKey(
     "raw",
-    enc.encode(secret || "default-surgeshield-secret-dev-key"),
+    enc.encode(signingKey),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign"],
@@ -62,9 +66,13 @@ export async function verifySeatPassport(
     const data = `${encodedHeader}.${encodedPayload}`;
 
     const enc = new TextEncoder();
+    const verificationKey = secret || (typeof Deno !== "undefined" && Deno.env.get("DEMO_MODE") === "true" ? "surgeshield-demo-secret-key" : "");
+    if (!verificationKey) {
+      return { valid: false, reason: "SEAT_PASSPORT_SECRET not configured" };
+    }
     const key = await crypto.subtle.importKey(
       "raw",
-      enc.encode(secret || "default-surgeshield-secret-dev-key"),
+      enc.encode(verificationKey),
       { name: "HMAC", hash: "SHA-256" },
       false,
       ["verify"],
