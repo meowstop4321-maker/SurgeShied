@@ -2,6 +2,7 @@
   "name": "surgeshield-root",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "workspaces": [
     "frontend",
     "worker"
@@ -17,6 +18,7 @@
     "@supabase/supabase-js": "^2.45.0"
   },
   "devDependencies": {
+    "supabase": "^2.116.0",
     "typescript": "^5.5.3",
     "vite": "^5.4.3"
   }
