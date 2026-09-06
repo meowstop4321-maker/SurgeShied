@@ -131,8 +131,14 @@ export const EventDetailPage: React.FC = () => {
               >
                 {event.registration_open ? "Registration Open" : "Registration Closed"}
               </span>
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-teal-500/10 border border-teal-500/30 text-teal-300">
-                {seatsAvailable} Seats Available
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
+                  seatsAvailable > 0
+                    ? "bg-teal-500/10 border-teal-500/30 text-teal-300"
+                    : "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                }`}
+              >
+                {seatsAvailable > 0 ? `${seatsAvailable} Seats Available` : "Waiting Queue Active (0 Available)"}
               </span>
             </div>
             <h1 className="text-3xl font-extrabold text-white">{event.title}</h1>
@@ -157,10 +163,35 @@ export const EventDetailPage: React.FC = () => {
                   <span>View Ticket QR</span>
                 </button>
               </div>
+            ) : !event.registration_open ? (
+              <button
+                disabled
+                className="px-6 py-3 rounded-xl bg-slate-800 text-slate-400 font-semibold text-sm border border-white/5 cursor-not-allowed"
+              >
+                Registration Closed
+              </button>
+            ) : seatsAvailable === 0 ? (
+              <button
+                onClick={handleRegister}
+                disabled={registering}
+                className="px-6 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm shadow-lg shadow-amber-500/20 flex items-center gap-2 transition-all disabled:opacity-50"
+              >
+                {registering ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" />
+                    <span>Joining Queue…</span>
+                  </>
+                ) : (
+                  <>
+                    <Users size={16} />
+                    <span>Join Waiting Queue</span>
+                  </>
+                )}
+              </button>
             ) : (
               <button
                 onClick={handleRegister}
-                disabled={registering || !event.registration_open}
+                disabled={registering}
                 className="px-6 py-3 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm shadow-lg shadow-teal-500/20 flex items-center gap-2 transition-all disabled:opacity-50"
               >
                 {registering ? (
