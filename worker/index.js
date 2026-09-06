@@ -59,8 +59,8 @@ const workerManager = new WorkerManager({
   passportSecret: SEAT_PASSPORT_SECRET,
   passportTtlSeconds: PASSPORT_TTL_SECONDS,
   minWorkers: 1,
-  maxWorkers: 10,
-  jobsPerWorker: 3,
+  maxWorkers: 12,
+  jobsPerWorker: 20,
   pollIntervalMs: 2000,
   scaleCheckIntervalMs: 3000,
   scaleDownCooldownMs: 10000,
@@ -129,12 +129,39 @@ async function heartbeat() {
 // --- Express HTTP Telemetry & Ops API --------------------------------------
 const app = express();
 app.use(express.json());
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", process.env.FRONTEND_ORIGIN || "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
 
 app.get("/health", (_req, res) => res.status(200).json({ status: "ok", worker_id: WORKER_ID }));
 
 // Telemetry & scaling stats for Operations Dashboard
 app.get("/manager/stats", (_req, res) => {
   res.status(200).json(workerManager.getStats());
+});
+
+app.get("/api/ops/metrics", async (_req, res) => {
+  try {
+    const { data, error } = await workerManager.admin.rpc("get_worker_metrics");
+    if (error) throw error;
+    const stats = workerManager.getStats();
+    res.status(200).json({
+      queue_length: Number(data?.queue_length || 0),
+      active_workers: stats.currentWorkers,
+      processing_rate: Number(data?.processing_rate || 0),
+      avg_latency_ms: Number(data?.avg_latency_ms || 0),
+      failed_jobs: Number(data?.failed_jobs || 0),
+      status: Number(data?.queue_length || 0) > 100 ? "High Load" : stats.currentWorkers > 1 ? "Recovering" : "Healthy",
+      target_workers: workerManager.calculateTargetWorkers(data || {}),
+      observed_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : err?.message || err?.details || String(err);
+    res.status(503).json({ error: message });
+  }
 });
 
 app.get("/jobs/status", async (_req, res) => {
@@ -182,8 +209,8 @@ app.post("/pubsub/notification-jobs", async (req, res) => {
     if (!dataB64) return res.status(204).send();
     const payload = JSON.parse(Buffer.from(dataB64, "base64").toString("utf8"));
     
-    // Enqueue with High Priority (8) into WorkerManager
-    await workerManager.enqueue("confirmation_email", payload, 8);
+    // Push is only a wake-up hint; the job is already in job_queue.
+    await workerManager.evaluateAndScale();
     res.status(204).send();
   } catch (err) {
     console.error("[PubSubPush] Error processing push message:", err.message);

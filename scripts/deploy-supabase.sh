@@ -40,7 +40,8 @@ echo "==> Deploying edge functions (verify_jwt settings come from supabase/confi
 npx supabase functions deploy surge-router
 npx supabase functions deploy simulate
 npx supabase functions deploy verify-audit
+npx supabase functions deploy log-explainer
 
 echo ""
 echo "Supabase side deployed. Functions live at:"
-echo "  \$(supabase status -o env | grep API_URL)/functions/v1/{surge-router,simulate,verify-audit}"
+echo "  \$(supabase status -o env | grep API_URL)/functions/v1/{surge-router,simulate,verify-audit,log-explainer}"
