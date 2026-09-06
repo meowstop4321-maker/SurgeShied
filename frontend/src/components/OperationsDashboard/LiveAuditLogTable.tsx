@@ -33,17 +33,15 @@ export function LiveAuditLogTable({ eventId }: { eventId?: string }) {
 
   const fetchLogs = async () => {
     try {
-      let query = supabase
+      const { data, error } = await supabase
         .from("audit_logs")
         .select("*")
         .order("seq", { ascending: false })
-        .limit(20);
+        .limit(30);
 
-      if (eventId) {
-        query = query.or(`entity_id.eq.${eventId},entity.eq.system,entity.eq.event`);
+      if (error) {
+        console.error("fetchLogs error:", error.message);
       }
-
-      const { data, error } = await query;
       if (!error && data) {
         setLogs(data);
       }
