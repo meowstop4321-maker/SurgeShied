@@ -1,0 +1,14 @@
+flowchart LR
+    Edge[Edge Functions] --> Audit[Audit logs]
+    Edge --> Status[System status]
+    Worker[Worker] --> Heartbeat[Worker heartbeats]
+    Worker --> Jobs[Notification jobs]
+    Metrics[get_ops_metrics RPC]
+    Audit --> Metrics
+    Status --> Metrics
+    Heartbeat --> Metrics
+    Jobs --> Metrics
+    Metrics --> Dashboard[Operations Dashboard]
+    Audit --> Verify[verify-audit]
+    Metrics --> Explain[log-explainer]
+    AWS[CloudWatch for AWS hosts] -. observes .-> Worker

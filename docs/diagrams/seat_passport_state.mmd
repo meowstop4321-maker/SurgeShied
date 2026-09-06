@@ -1,0 +1,10 @@
+stateDiagram-v2
+    [*] --> Issued
+    Issued --> Valid: Signature and expiry valid
+    Valid --> Completed: Booking completed
+    Valid --> Expired: Expiry timestamp reached
+    Issued --> Invalid: Signature mismatch or malformed
+    Expired --> Released: Worker/database sweep
+    Invalid --> [*]
+    Completed --> [*]
+    Released --> [*]

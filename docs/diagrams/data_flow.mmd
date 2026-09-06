@@ -1,0 +1,13 @@
+flowchart LR
+    Request[JWT registration request] --> Key[Idempotency key]
+    Key --> Event[Event and lane lookup]
+    Event --> Rank[Headroom and queue ranking]
+    Rank --> Allocate[Locked allocate_seat RPC]
+    Allocate --> Pending[Pending registration]
+    Pending --> Token[HMAC Seat Passport]
+    Token --> Job[Queued notification job]
+    Allocate --> Audit[Audit append]
+    Job --> Send[Worker email attempt]
+    Send --> Result[Sent retry or dead_letter]
+    Pending --> Expiry[Expiry sweep]
+    Expiry --> Queue[Queue promotion]

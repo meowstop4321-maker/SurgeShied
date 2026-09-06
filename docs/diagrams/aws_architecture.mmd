@@ -1,0 +1,11 @@
+flowchart LR
+    User[Attendee or Organizer] --> CF[CloudFront]
+    CF --> S3[S3 React SPA]
+    S3 --> Supabase[Supabase Auth Edge Functions Postgres]
+    Supabase --> App[App Runner Worker]
+    App --> ECR[ECR Image]
+    Supabase -. notification adapter .-> SQS[SQS Queue]
+    App -. optional SQS consumer .-> SQS
+    CW[CloudWatch] -. metrics and logs .-> CF
+    CW -. metrics and logs .-> App
+    CW -. metrics and logs .-> SQS

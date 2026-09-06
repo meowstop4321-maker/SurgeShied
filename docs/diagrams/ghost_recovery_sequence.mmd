@@ -1,0 +1,12 @@
+sequenceDiagram
+    participant Worker
+    participant DB as PostgreSQL
+    participant Queue
+    Worker->>DB: release_expired_seats()
+    DB->>DB: Lock expired pending rows
+    DB->>DB: Decrement lane and mark expired
+    DB->>Queue: Attempt promote_from_queue()
+    DB-->>Worker: Released count
+    Worker->>DB: finishPromotions()
+    DB->>DB: Issue passport and queue notification job
+    Worker->>DB: Self-heal sweep sees job

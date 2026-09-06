@@ -1,0 +1,17 @@
+sequenceDiagram
+    actor User
+    participant UI as React UI
+    participant Router as surge-router
+    participant DB as PostgreSQL
+    User->>UI: Double click or retry
+    UI->>Router: Request with same idempotency key
+    Router->>DB: Lookup idempotency key
+    alt Response already stored
+        DB-->>Router: Original response
+        Router-->>UI: Replay same response
+    else First request
+        Router->>DB: Allocate under lock
+        DB-->>Router: Store response
+        Router-->>UI: Confirmed or queued
+    end
+    Router->>DB: Unique active registration protects duplicate user state

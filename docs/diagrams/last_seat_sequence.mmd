@@ -1,0 +1,13 @@
+sequenceDiagram
+    actor A as Attendee A
+    actor B as Attendee B
+    participant Router as Edge Router
+    participant DB as Locked lane row
+    A->>Router: Register
+    B->>Router: Register
+    Router->>DB: A requests SELECT FOR UPDATE
+    Router->>DB: B waits for row lock
+    DB-->>Router: A increments last seat
+    Router-->>A: Confirmed
+    DB-->>Router: B sees lane full
+    Router-->>B: Queue or conflict
