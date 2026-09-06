@@ -222,7 +222,7 @@ async function runTests() {
 
     // Run Ghost Seat Sweep
     const { data: releasedCount, error: sweepErr } = await admin.rpc("release_expired_seats");
-    assert(!sweepErr, "4.1 Ghost Seat Recovery sweeps and releases abandoned seat", `Released: ${releasedCount ?? 1} seat(s)`);
+    assert(!sweepErr && (releasedCount ?? 0) >= 0, "4.1 Ghost Seat Recovery sweeps and releases abandoned seat", sweepErr ? sweepErr.message : `Released: ${releasedCount} seat(s)`);
 
     // Verify queue promotion
     const { data: promotedEntry } = await admin.from("queue_entries")

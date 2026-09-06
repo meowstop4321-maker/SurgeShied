@@ -70,7 +70,7 @@ async function fallbackRegister(eventId: string) {
     return { status: "queued", lane_index: 0, position: 1 };
   }
 
-  // Try allocate seat in healthiest lane
+  // Try allocate seat in healthiest lane via locked RPC
   const chosenLane = ranked[0].lane_index;
   const { data: reg, error: allocErr } = await supabase.rpc("allocate_seat", {
     p_event_id: eventId,
@@ -80,20 +80,21 @@ async function fallbackRegister(eventId: string) {
   });
 
   if (allocErr) {
-    // If unique constraint or error
-    if (allocErr.code === "23505") {
+    if (allocErr.code === "23505" || allocErr.message?.includes("already_registered")) {
       return { status: "already_registered", message: "You already have an active registration" };
+    }
+    if (allocErr.message?.includes("lane_full")) {
+      return { status: "queued", lane_index: chosenLane, position: 1 };
     }
     throw allocErr;
   }
 
-  const fakePassport = `PASSPORT-${crypto.randomUUID()}`;
-  await supabase.from("registrations").update({
-    seat_passport_token: fakePassport,
-    seat_passport_expires_at: new Date(Date.now() + 120000).toISOString(),
-  }).eq("id", reg.id);
-
-  return { status: "confirmed", registration: reg, seat_passport: fakePassport, lane_index: chosenLane };
+  return {
+    status: "confirmed",
+    registration: reg,
+    seat_passport: reg.seat_passport_token || `PASSPORT-${reg.id.slice(0, 8)}`,
+    lane_index: chosenLane,
+  };
 }
 
 export async function registerForEvent(eventId: string) {
@@ -114,47 +115,17 @@ async function fallbackSimulate(action: string, eventId?: string, count: number 
     case "trigger_surge": {
       if (!eventId) throw new Error("No event available for simulation");
       const targetCount = action === "trigger_surge" ? 300 : count;
-      const { data: lanes } = await supabase.from("seat_partitions").select("*").eq("event_id", eventId);
-      if (!lanes || lanes.length === 0) throw new Error("No lanes found");
-
-      // Calculate true available headroom across all lanes
-      const totalCapacity = lanes.reduce((sum, l) => sum + l.capacity, 0);
-      const currentTaken = lanes.reduce((sum, l) => sum + l.seats_taken, 0);
-      const availableHeadroom = Math.max(0, totalCapacity - currentTaken);
-
-      const actualConfirmed = Math.min(targetCount, availableHeadroom);
-      const actualQueued = Math.max(0, targetCount - actualConfirmed);
-
-      // Allocate actualConfirmed across lanes proportionally
-      let remainingToAllocate = actualConfirmed;
-      for (const lane of lanes) {
-        const laneHeadroom = Math.max(0, lane.capacity - lane.seats_taken);
-        const allocateForLane = Math.min(laneHeadroom, Math.ceil(remainingToAllocate / lanes.length));
-        if (allocateForLane > 0) {
-          await supabase.from("seat_partitions").update({ seats_taken: lane.seats_taken + allocateForLane }).eq("id", lane.id);
-          remainingToAllocate -= allocateForLane;
-        }
-      }
-
-      const newTotalTaken = currentTaken + actualConfirmed;
-      const saturationRatio = totalCapacity > 0 ? newTotalTaken / totalCapacity : 1.0;
-      const shouldTriggerLite = saturationRatio > 0.85 || actualQueued > 10;
-
-      await supabase.rpc("set_system_status", {
+      const { data: res, error } = await supabase.rpc("simulate_surge_load", {
         p_event_id: eventId,
-        p_lite_mode: shouldTriggerLite,
-        p_reason: shouldTriggerLite
-          ? `Simulated surge: ${(saturationRatio * 100).toFixed(0)}% saturation, ${actualQueued} attendees queued`
-          : null,
-        p_surge_score: saturationRatio,
+        p_count: targetCount,
       });
-
+      if (error) throw error;
       return {
         status: "ok",
         action,
-        attempted: targetCount,
-        confirmed: actualConfirmed,
-        queued: actualQueued,
+        attempted: res?.attempted ?? targetCount,
+        confirmed: res?.confirmed ?? 0,
+        queued: res?.queued ?? 0,
         already_registered: 0,
         error: 0,
       };
@@ -180,19 +151,7 @@ async function fallbackSimulate(action: string, eventId?: string, count: number 
     case "recover_system": {
       await supabase.rpc("set_circuit_guardian_state", { p_state: "closed", p_reason: "Recovered" });
       if (eventId) {
-        // Reset partition seats for fresh testing
-        const { data: lanes } = await supabase.from("seat_partitions").select("*").eq("event_id", eventId);
-        if (lanes) {
-          for (const lane of lanes) {
-            await supabase.from("seat_partitions").update({ seats_taken: 0 }).eq("id", lane.id);
-          }
-        }
-        await supabase.rpc("set_system_status", {
-          p_event_id: eventId,
-          p_lite_mode: false,
-          p_reason: null,
-          p_surge_score: 0.0,
-        });
+        await supabase.rpc("reset_event_partitions", { p_event_id: eventId });
       }
       return { status: "ok", action, message: "System recovered: partition seats reset to 0 and circuit closed." };
     }
