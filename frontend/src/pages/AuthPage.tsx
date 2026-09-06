@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Shield, Mail, Lock, User, ArrowRight, AlertCircle, Sparkles } from "lucide-react";
+import { Shield, Mail, Lock, User, ArrowRight, AlertCircle, Sparkles, HelpCircle } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 export const AuthPage: React.FC = () => {
@@ -42,7 +42,13 @@ export const AuthPage: React.FC = () => {
         }
       }
     } catch (err: any) {
-      setError(err.message || "Authentication failed");
+      if (err.message?.includes("rate limit") || err.message?.includes("over_email_send_rate_limit")) {
+        setError(
+          "Supabase email rate limit reached. To fix: in Supabase Dashboard → Authentication → Providers → Email → Turn OFF 'Confirm email'. In the meantime, you can sign in directly."
+        );
+      } else {
+        setError(err.message || "Authentication failed");
+      }
     } finally {
       setLoading(false);
     }
@@ -61,13 +67,19 @@ export const AuthPage: React.FC = () => {
     setRole(demoRole);
 
     try {
+      // 1. Try signing in first (bypasses email confirmation)
       const { data, error: signInErr } = await supabase.auth.signInWithPassword({
         email: demoEmail,
         password: demoPass,
       });
 
+      if (data?.user) {
+        navigate(demoRole === "organizer" ? "/organizer" : "/events");
+        return;
+      }
+
+      // 2. If user doesn't exist, attempt signUp
       if (signInErr) {
-        // If demo user doesn't exist yet, auto sign-up
         const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
           email: demoEmail,
           password: demoPass,
@@ -75,15 +87,22 @@ export const AuthPage: React.FC = () => {
             data: { full_name: demoRole === "organizer" ? "Demo Organizer" : "Demo Attendee", role: demoRole },
           },
         });
-        if (signUpErr) throw signUpErr;
+
+        if (signUpErr) {
+          if (signUpErr.message?.includes("rate limit") || signUpErr.message?.includes("over_email_send_rate_limit")) {
+            setError(
+              "Supabase email rate limit reached. Fix in 10s: In Supabase Dashboard → Authentication → Providers → Email → Turn OFF 'Confirm email'."
+            );
+          } else {
+            setError(signUpErr.message);
+          }
+          return;
+        }
+
         if (signUpData.user) {
           navigate(demoRole === "organizer" ? "/organizer" : "/events");
           return;
         }
-      }
-
-      if (data?.user) {
-        navigate(demoRole === "organizer" ? "/organizer" : "/events");
       }
     } catch (err: any) {
       setError(err.message || "Demo sign-in failed. Please check credentials or sign up below.");
@@ -141,9 +160,12 @@ export const AuthPage: React.FC = () => {
         </div>
 
         {error && (
-          <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
-            <AlertCircle size={14} className="shrink-0" />
-            <span>{error}</span>
+          <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-xs space-y-1">
+            <div className="flex items-center gap-2 font-semibold">
+              <AlertCircle size={15} className="shrink-0 text-rose-400" />
+              <span>Authentication Error</span>
+            </div>
+            <p className="text-[11px] text-rose-300/90 leading-relaxed pl-5">{error}</p>
           </div>
         )}
 
