@@ -62,6 +62,8 @@ const ACTION_META: Record<string, { level: LogLevel; muted?: boolean }> = {
   circuit_guardian_close: { level: "success" },
   worker_scaled_up: { level: "info" },
   worker_scaled_down: { level: "info" },
+  scaling_out_triggered: { level: "info" },
+  scaling_in_triggered: { level: "info" },
   lane_split: { level: "info" },
   lane_merge: { level: "info" },
   event_created: { level: "info", muted: true },
@@ -165,11 +167,22 @@ function messageFor(log: AuditLogRow, debugMode: boolean): string {
     case "worker_scaled_down":
       return `❄ AUTOSCALE DOWN: Worker pool scaled ${m.from_workers} → ${m.to_workers} workers`;
 
-    case "lane_split":
-      return `${laneTag}⚡ PARTITION SPLIT: Dynamic lane divided under surge pressure`;
+    case "scaling_out_triggered":
+    case "lane_split": {
+      const reason = m.trigger_reason ? ` | ${m.trigger_reason}` : "";
+      const cap = m.capacity_redistributed ? ` | Cap: ${m.capacity_redistributed}` : "";
+      const occ = m.occupancy_redistributed ? ` | Occ: ${m.occupancy_redistributed}` : "";
+      const totalLanes = m.new_lane_count ? ` · Total: ${m.new_lane_count} active lanes` : "";
+      return `🚀 SCALE-OUT: Lane ${m.lane_index ?? "?"} provisioned${reason}${cap}${occ}${totalLanes}`;
+    }
 
-    case "lane_merge":
-      return `${laneTag}PARTITIONS MERGED: Capacity consolidated`;
+    case "scaling_in_triggered":
+    case "lane_merge": {
+      const removed = m.removed_lane != null ? `Lane ${m.removed_lane}` : "idle lane";
+      const target = m.lane_index != null ? `Lane ${m.lane_index}` : "Lane 0";
+      const totalLanes = m.new_lane_count ? ` · ${m.new_lane_count} active lanes` : "";
+      return `❄ SCALE-IN: ${removed} consolidated into ${target} (Idle cooldown active${totalLanes})`;
+    }
 
     case "event_created":
       return `Event "${m.title ?? "untitled"}" initialized with ${m.capacity ?? "?"} seats across ${m.lane_count ?? 4} lanes`;

@@ -13,6 +13,7 @@ import {
   TrendingUp,
   ShieldAlert,
   Flame,
+  Info,
 } from "lucide-react";
 import { getSeatPartitions, subscribeSeatPartitions } from "../../lib/api";
 import { supabase } from "../../lib/supabaseClient";
@@ -44,6 +45,7 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
   const [lanes, setLanes] = useState<LaneRow[]>([]);
   const [waitingCards, setWaitingCards] = useState<WaitingUserCard[]>([]);
   const [newlyScaledLanes, setNewlyScaledLanes] = useState<Set<number>>(new Set());
+  const [activeInfoLane, setActiveInfoLane] = useState<number | null>(null);
   const prevLanesRef = useRef<Set<number>>(new Set());
   const prevSeatedRef = useRef<Map<number, number>>(new Map());
   const lastTickTimeRef = useRef<number>(Date.now());
@@ -228,7 +230,7 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
             )}
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            Dynamically scales out on occupancy (&gt;25%, &gt;50%, &gt;75%, &gt;90%) or queue surge; scales in smoothly after 30s idle.
+            Dynamically scales out on occupancy (&gt;25%, &gt;50%, &gt;75%, &gt;90%, &gt;95%) or queue surge; scales in smoothly after 30s idle.
           </p>
         </div>
 
@@ -287,7 +289,7 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
         </div>
       </div>
 
-      {/* Production Live Lane Matrix Table */}
+      {/* Production Live Lane Matrix Table with Why Did This Lane Appear Info */}
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 font-mono flex items-center gap-1.5">
@@ -318,6 +320,7 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
                 const isOptimal = lane.lane_index === optimalLane;
                 const isFull = headroom === 0;
                 const isNewlyScaled = newlyScaledLanes.has(lane.lane_index);
+                const isInfoOpen = activeInfoLane === lane.lane_index;
 
                 return (
                   <tr
@@ -332,13 +335,61 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
                         : ""
                     }`}
                   >
-                    <td className="py-2 px-3 font-semibold flex items-center gap-2">
+                    <td className="py-2 px-3 font-semibold flex items-center gap-2 relative">
                       <span
                         className={`w-2 h-2 rounded-full ${
                           isFull ? "bg-rose-400" : "bg-emerald-400 animate-pulse"
                         }`}
                       />
                       <span className="text-white">Lane {lane.lane_index}</span>
+
+                      {/* Interactive Provisioning Reason Popover */}
+                      <div className="relative inline-block">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveInfoLane(isInfoOpen ? null : lane.lane_index);
+                          }}
+                          className="text-slate-400 hover:text-teal-300 transition-colors p-0.5 rounded focus:outline-none"
+                          title="Why did this lane appear?"
+                        >
+                          <Info className="w-3.5 h-3.5" />
+                        </button>
+
+                        {isInfoOpen && (
+                          <div
+                            className="absolute left-0 top-full mt-1 z-50 w-72 rounded-lg border border-teal-500/30 bg-slate-950/95 p-3 shadow-2xl backdrop-blur-xl text-left font-mono animate-in fade-in zoom-in-95 duration-200"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="flex items-center justify-between border-b border-white/10 pb-1.5 mb-2">
+                              <span className="text-xs font-bold text-teal-300 flex items-center gap-1.5">
+                                <Sparkles className="w-3 h-3 text-teal-400" />
+                                Lane {lane.lane_index} Provisioning Policy
+                              </span>
+                              <span className="text-[9px] bg-teal-500/20 text-teal-300 px-1.5 py-0.5 rounded border border-teal-500/30">
+                                {lane.lane_index === 0 ? "BASELINE" : "AUTOSCALED"}
+                              </span>
+                            </div>
+                            <div className="space-y-1.5 text-[11px] text-slate-300">
+                              <p>
+                                <strong className="text-slate-200">Trigger:</strong>{" "}
+                                {lane.lane_index === 0
+                                  ? "Minimal baseline infrastructure (Provisioned at launch)"
+                                  : `Spawned under surge load (Occupancy >${Math.min(90, 25 * lane.lane_index)}% OR Queue >${20 * lane.lane_index} users)`}
+                              </p>
+                              <p className="text-slate-400">
+                                <strong className="text-slate-200">Strategy:</strong> Proportional split with strict zero-overbooking invariant.
+                              </p>
+                              <div className="pt-1.5 border-t border-white/10 flex items-center justify-between text-[10px] text-slate-400">
+                                <span>Capacity: <strong className="text-white">{lane.capacity} seats</strong></span>
+                                <span>Status: <strong className="text-emerald-400">● Healthy</strong></span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
                       {isNewlyScaled && (
                         <span className="text-[9px] bg-gradient-to-r from-teal-500/30 to-emerald-500/30 text-teal-300 border border-teal-400/50 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider animate-pulse flex items-center gap-1 shadow-[0_0_8px_rgba(45,212,191,0.5)]">
                           <Sparkles className="w-2.5 h-2.5 text-teal-300" />
