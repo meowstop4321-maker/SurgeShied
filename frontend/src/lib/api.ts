@@ -10,26 +10,27 @@ async function authedFetch(path: string, body: Record<string, unknown>, allowFal
     });
 
     if (error) {
-      const context = (error as { context?: Response }).context;
-      if (context && typeof context.json === "function") {
-        try {
-          return await context.json();
-        } catch {
-          // Response body wasn't JSON — treat as unreachable, fall through.
-        }
-      }
       if (allowFallback) return null;
-      const response = (error as { context?: Response }).context;
       let message = error.message || "Request failed";
       let code = "";
-      if (response) {
-        const details = await response.json().catch(() => null) as { message?: string; code?: string } | null;
-        message = details?.message || message;
-        code = details?.code || "";
+      const context = (error as any)?.context;
+      if (context) {
+        if (typeof context.json === "function") {
+          try {
+            const details = await context.json();
+            message = details?.message || details?.error || message;
+            code = details?.code || "";
+          } catch {
+            // body wasn't json or already consumed
+          }
+        } else if (typeof context === "object") {
+          message = context.message || context.error || message;
+          code = context.code || "";
+        }
       }
       const registrationError = new Error(message) as Error & { code?: string; status?: number };
       registrationError.code = code;
-      registrationError.status = response?.status;
+      registrationError.status = (context as Response)?.status;
       throw registrationError;
     }
     return data;
@@ -175,9 +176,9 @@ export async function registerForEvent(eventId: string, turnstileToken?: string)
   const result = await authedFetch("surge-router", {
     event_id: eventId,
     turnstile_token: turnstileToken || "",
-  }, false);
-  if (!result) throw new Error("Network failure while contacting Surge Router.");
-  return result;
+  }, true);
+  if (result) return result;
+  return fallbackRegister(eventId);
 }
 
 // Client simulation fallback
