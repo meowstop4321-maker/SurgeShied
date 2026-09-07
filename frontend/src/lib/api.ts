@@ -39,6 +39,20 @@ async function authedFetch(path: string, body: Record<string, unknown>, allowFal
   }
 }
 
+async function requireOrganizer() {
+  const { data: userData } = await supabase.auth.getUser();
+  if (!userData.user) throw new Error("Organizer access required");
+
+  const { data: profile, error } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", userData.user.id)
+    .maybeSingle();
+  if (error || (profile?.role !== "organizer" && profile?.role !== "admin")) {
+    throw new Error("Organizer access required");
+  }
+}
+
 // Robust fallback registration when edge function is not deployed at all.
 // Only reached when authedFetch() above could not get ANY response from
 // surge-router — never as a silent substitute for a real error response.
@@ -350,6 +364,7 @@ async function fallbackSimulate(action: string, eventId?: string, count: number 
 }
 
 export async function simulate(action: string, eventId?: string, count?: number, durationSeconds?: number) {
+  await requireOrganizer();
   const result = await authedFetch("simulate", { action, event_id: eventId, count, duration_seconds: durationSeconds });
   if (result) return result;
   return fallbackSimulate(action, eventId, count, durationSeconds);
@@ -440,7 +455,8 @@ const OPS_METRICS_FALLBACK: OpsMetrics = {
   autoscaling_note: "Waiting for first worker heartbeat…",
 };
 
-export async function getOpsMetrics(eventId: string): Promise<OpsMetrics> {
+export async function getOpsMetrics(eventId: string, organizerOnly = false): Promise<OpsMetrics> {
+  if (organizerOnly) await requireOrganizer();
   try {
     const { data, error } = await supabase.rpc("get_ops_metrics", { p_event_id: eventId });
     if (error) throw error;
@@ -458,6 +474,7 @@ export type ActiveAlert = {
 };
 
 export async function getActiveAlerts(eventId: string): Promise<ActiveAlert[]> {
+  await requireOrganizer();
   try {
     const { data, error } = await supabase.rpc("get_active_alerts", { p_event_id: eventId });
     if (error) throw error;
@@ -481,6 +498,7 @@ export type DeadLetterJob = {
 };
 
 export async function getDeadLetterJobs(limit = 50): Promise<DeadLetterJob[]> {
+  await requireOrganizer();
   try {
     const { data, error } = await supabase.rpc("get_dead_letter_jobs", { p_limit: limit });
     if (error) throw error;
@@ -492,6 +510,7 @@ export async function getDeadLetterJobs(limit = 50): Promise<DeadLetterJob[]> {
 }
 
 export async function reprocessDeadLetterJob(jobId: string) {
+  await requireOrganizer();
   const { data, error } = await supabase.rpc("reprocess_dead_letter_job", { p_job_id: jobId });
   if (error) throw error;
   return data;
@@ -509,6 +528,7 @@ export interface WorkerMetrics {
 }
 
 export async function getWorkerMetrics(): Promise<WorkerMetrics> {
+  await requireOrganizer();
   if (!WORKER_URL) throw new Error("VITE_WORKER_URL is not configured");
   const { data } = await supabase.auth.getSession();
   const response = await fetch(`${WORKER_URL.replace(/\/$/, "")}/api/ops/metrics`, {
