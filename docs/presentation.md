@@ -20,7 +20,7 @@
 |---|---|---|
 | **0:00 - 1:00** | **Live Event Browser & Attendee Registration** | Open the homepage. Navigate to a live event. Show the **Live Surge Partitions** widget displaying real-time lane headroom. Click **Instant Reserve Seat**. Show the immediate confirmation modal with QR ticket and Google Calendar/.ics export. |
 | **1:00 - 2:00** | **Parallel Waiting Queue & Saturation** | Switch to a smaller event (e.g. 10 capacity). Register until full. Show the **Parallel Waiting Queue** UI. Point out lane-specific FIFO position, dynamic ETA, and Supabase Realtime auto-promotion. |
-| **2:00 - 3:15** | **Operations Dashboard & Real-Time Telemetry** | Navigate to `/ops`. Walk through **Requests/sec**, **SurgeScore Gauge**, **Circuit Guardian State**, **Worker Health**, and the **AI Log Explainer** which translates metrics into natural English incident reports. |
+| **2:00 - 3:15** | **Operations Dashboard & Real-Time Telemetry** | Navigate to `/ops`. Walk through **Requests/sec**, **SurgeScore Gauge**, **Circuit Guardian State**, **Worker Health**, and the **Live Log Console & Audit Table**. |
 | **3:15 - 4:15** | **Stress Simulator & Circuit Guardian Chaos Test** | Navigate to `/simulate` or trigger from Ops. Click **1,000 Users** — show CPR balancing traffic across lanes with 0 lock contention. Click **Email Failure** — watch Circuit Guardian trip to `OPEN`, notifications buffer into retry queues, and Lite Mode banner activate. |
 | **4:15 - 5:00** | **Tamper-Evident Trust Card & Verification** | Highlight the **Trust Card** on `/ops`. Click **Re-verify**. Explain the SHA-256 hash chaining of every registration and state change. Conclude with summary. |
 

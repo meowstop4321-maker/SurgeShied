@@ -12,7 +12,6 @@ import { AlertBanners } from "../components/OperationsDashboard/AlertBanners";
 import { SystemHealthStrip } from "../components/OperationsDashboard/SystemHealthStrip";
 import { TrustCard } from "../components/TrustCard";
 import { SimulationPanel } from "../components/SimulationPanel";
-import { LogExplainerCard } from "../components/LogExplainerCard";
 
 const POLL_MS = 1500;
 const HISTORY_LEN = 20;
@@ -284,8 +283,6 @@ export function OperationsDashboard() {
           <LiveLogConsole eventId={eventId ?? undefined} />
 
           <DeadLetterQueuePanel />
-
-          {eventId && <LogExplainerCard eventId={eventId} />}
 
           {eventId && <LiveAuditLogTable eventId={eventId} />}
         </div>
