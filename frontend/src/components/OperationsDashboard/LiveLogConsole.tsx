@@ -93,33 +93,37 @@ function isMuted(action: string): boolean {
 function messageFor(log: AuditLogRow): string {
   const m = log.metadata ?? {};
   const laneTag = m.lane_index != null ? `[Lane ${m.lane_index}] ` : m.candidate_lane != null ? `[Lane ${m.candidate_lane}] ` : "";
+  const user = m.user_tag ? `@${m.user_tag}` : m.user_id ? `@user_${String(m.user_id).slice(0, 6)}` : log.actor_id ? `@${log.actor_id.slice(0, 8)}` : "Attendee";
 
   switch (log.action) {
     case "registration_attempt":
-      return `${laneTag}Registration request received → Processing transaction`;
+      return `${laneTag}📥 Ingress: ${user} arrived → routing to parallel partition`;
     case "lane_assignment":
-      return `${laneTag}Traffic routed to Stripe (${m.headroom ?? 0} seats headroom)`;
+      return `${laneTag}🔄 Routed: ${user} directed to Lane ${m.candidate_lane ?? m.lane_index ?? 0} (${m.headroom ?? 0} seats free)`;
     case "registration_confirmed":
-    case "seat_allocated":
-      return `${laneTag}✅ SUCCESS: Seat Confirmed & Passport Issued${m.seats_taken != null ? ` (${m.seats_taken}/${m.capacity} seats taken)` : ""}`;
+    case "seat_allocated": {
+      const laneDetails = m.seats_taken != null && m.capacity ? ` (${m.seats_taken}/${m.capacity} in lane)` : "";
+      const totalDetails = m.total_booked ? ` · Total Booked: ${m.total_booked} seats` : "";
+      return `${laneTag}✅ CONFIRMED: ${user} booked seat${laneDetails}${totalDetails}`;
+    }
     case "seat_reserved":
-      return `${laneTag}✅ SUCCESS: Seat reserved — hold window active`;
+      return `${laneTag}🎟️ HELD: Seat reserved for ${user} — checkout window active`;
     case "queue_join":
-      return `${laneTag}⏳ QUEUED: Joined waiting queue at position #${m.position ?? "1"} (${m.reason ?? "lane saturated, zero overbooking"})`;
+      return `${laneTag}⏳ QUEUED: Lane capacity reached → ${user} placed in Waiting Queue at #${m.position ?? "1"}`;
     case "queue_promoted":
-      return `${laneTag}🚀 PROMOTED: Queue entry upgraded to confirmed seat — passport generated`;
+      return `${laneTag}🚀 PROMOTED: ${user} upgraded from queue to confirmed seat`;
     case "queue_drained":
       return `${laneTag}Queue cleared — ${m.reason ?? "all waiting attendees processed"}`;
     case "seat_released":
       return `${laneTag}⚠️ RELEASED: Ghost seat reclaimed into inventory`;
     case "rate_limited":
-      return `${laneTag}⚠️ THROTTLED: Rate limit hit — cooldown ${m.retry_after ?? "?"}s`;
+      return `${laneTag}⚠️ THROTTLED: ${user} rate-limited — retry allowed in ${m.retry_after ?? "?"}s`;
     case "registration_failed":
-      return `${laneTag}❌ FAILED: ${m.reason ?? m.message ?? m.detail ?? "transaction rejected"}`;
+      return `${laneTag}❌ FAILED: ${user} transaction rejected (${m.reason ?? m.message ?? m.detail ?? "unknown error"})`;
     case "job_retry_scheduled":
       return `${laneTag}🔄 RETRY: ${m.job_type ?? "Job"} failed (attempt ${m.attempt}/${m.max_attempts}) — retrying in ${m.retry_in_seconds}s`;
     case "job_dead_lettered":
-      return `${laneTag}❌ DLQ: ${m.job_type ?? "Job"} exhausted retries — moved to Dead Letter Queue: ${m.error ?? ""}`;
+      return `${laneTag}❌ DLQ: ${m.job_type ?? "Job"} exhausted retries → Dead Letter Queue`;
     case "dlq_reprocessed":
       return `${laneTag}✅ REPROCESSED: ${m.job_type ?? "Job"} replay triggered from Dead Letter Queue`;
     case "circuit_guardian_open":
@@ -131,7 +135,7 @@ function messageFor(log: AuditLogRow): string {
     case "worker_scaled_down":
       return `❄ AUTOSCALE DOWN: Worker pool scaled ${m.from_workers} → ${m.to_workers} workers`;
     case "lane_split":
-      return `${laneTag}⚡ PARTITION SPLIT: Dynamic lane scaled up under surge pressure`;
+      return `${laneTag}⚡ PARTITION SPLIT: Dynamic lane divided under surge pressure`;
     case "lane_merge":
       return `${laneTag}PARTITIONS MERGED: Capacity consolidated`;
     case "event_created":

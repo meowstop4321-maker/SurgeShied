@@ -180,18 +180,40 @@ async function fallbackSimulate(action: string, eventId?: string, count: number 
       const perWave = Math.max(1, Math.ceil(count / totalWaves));
       let sent = 0;
 
+      // Fetch starting capacity to track running total
+      const { data: initialParts } = await supabase
+        .from("seat_partitions")
+        .select("lane_index, capacity, seats_taken")
+        .eq("event_id", eventId)
+        .order("lane_index");
+      let runningTotal = (initialParts ?? []).reduce((acc, p) => acc + (p.seats_taken || 0), 0);
+
       const runWave = async () => {
         const thisWave = Math.min(perWave, count - sent);
         if (thisWave <= 0) return;
 
-        // 1. Allocate real seats across partition lanes
+        // 1. Allocate real seats in database
         await supabase.rpc("simulate_surge_load", { p_event_id: eventId, p_count: thisWave });
         sent += thisWave;
 
-        // 2. Log request_metrics for live telemetry (Requests/sec & Active Users)
+        // 2. Fetch updated partition status
+        const { data: updatedParts } = await supabase
+          .from("seat_partitions")
+          .select("lane_index, capacity, seats_taken")
+          .eq("event_id", eventId)
+          .order("lane_index");
+
+        // 3. Emit individual detailed logs for each user in this wave
         for (let i = 0; i < thisWave; i++) {
+          const userIndex = sent - thisWave + i + 1;
+          const userTag = `attendee_${String(userIndex).padStart(3, "0")}`;
+          const assignedLane = (userIndex - 1) % ((updatedParts && updatedParts.length > 0) ? updatedParts.length : 4);
+          const laneData = updatedParts?.find((p) => p.lane_index === assignedLane);
+          runningTotal += 1;
+
           const fakeUser = crypto.randomUUID();
-          const latency = Math.floor(Math.random() * 45) + 10;
+          const latency = Math.floor(Math.random() * 35) + 12;
+
           supabase.rpc("log_request_metric", {
             p_event_id: eventId,
             p_user_id: fakeUser,
@@ -199,23 +221,22 @@ async function fallbackSimulate(action: string, eventId?: string, count: number 
             p_status_code: 200,
             p_latency_ms: latency,
           });
-        }
 
-        // 3. Emit real-time audit log with explicit lane tag
-        const assignedLane = sent % 4;
-        supabase.rpc("append_audit_log", {
-          p_actor_id: null,
-          p_action: "registration_confirmed",
-          p_entity: "event",
-          p_entity_id: eventId,
-          p_metadata: {
-            lane_index: assignedLane,
-            seats_allocated: thisWave,
-            total_sent: sent,
-            target_count: count,
-            status: "confirmed"
-          }
-        });
+          supabase.rpc("append_audit_log", {
+            p_actor_id: null,
+            p_action: "registration_confirmed",
+            p_entity: "event",
+            p_entity_id: eventId,
+            p_metadata: {
+              user_tag: userTag,
+              lane_index: assignedLane,
+              seats_taken: laneData?.seats_taken ?? Math.ceil(runningTotal / 4),
+              capacity: laneData?.capacity ?? 250,
+              total_booked: runningTotal,
+              status: "confirmed",
+            },
+          });
+        }
 
         if (sent < count) {
           setTimeout(runWave, 2000);
@@ -243,6 +264,14 @@ async function fallbackSimulate(action: string, eventId?: string, count: number 
       });
       if (error) throw error;
 
+      // Fetch updated partitions to display accurate total
+      const { data: updatedParts } = await supabase
+        .from("seat_partitions")
+        .select("lane_index, capacity, seats_taken")
+        .eq("event_id", eventId)
+        .order("lane_index");
+      const newTotal = (updatedParts ?? []).reduce((acc, p) => acc + (p.seats_taken || 0), 0);
+
       // Populate telemetry request_metrics for immediate Requests/sec spike
       const batchSize = Math.min(targetCount, 60);
       for (let i = 0; i < batchSize; i++) {
@@ -257,21 +286,27 @@ async function fallbackSimulate(action: string, eventId?: string, count: number 
         });
       }
 
-      // Emit audit logs for each lane
-      for (let l = 0; l < 4; l++) {
+      // Emit detailed audit logs for all 4 lanes
+      (updatedParts ?? [0, 1, 2, 3]).forEach((p, idx) => {
+        const laneIdx = typeof p === "number" ? p : p.lane_index;
+        const laneTaken = typeof p === "number" ? Math.floor(newTotal / 4) : p.seats_taken;
+        const laneCap = typeof p === "number" ? 250 : p.capacity;
+
         supabase.rpc("append_audit_log", {
           p_actor_id: null,
           p_action: "registration_confirmed",
           p_entity: "event",
           p_entity_id: eventId,
           p_metadata: {
-            lane_index: l,
-            seats_taken: Math.floor(targetCount / 4),
-            capacity: 250,
-            status: "confirmed"
-          }
+            user_tag: `batch_${idx + 1}`,
+            lane_index: laneIdx,
+            seats_taken: laneTaken,
+            capacity: laneCap,
+            total_booked: newTotal,
+            status: "confirmed",
+          },
         });
-      }
+      });
 
       return {
         status: "ok",
