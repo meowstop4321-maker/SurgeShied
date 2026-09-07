@@ -239,11 +239,11 @@ async function fallbackSimulate(action: string, eventId?: string, count: number 
       if (error) throw error;
 
       // Populate telemetry request_metrics with real outcome split
-      const batchSize = Math.min(targetCount, 60);
+      const batchSize = Math.min(targetCount, 250);
       const confirmedRatio = targetCount > 0 ? ((res as any)?.confirmed ?? targetCount) / targetCount : 1;
       for (let i = 0; i < batchSize; i++) {
         const fakeUser = crypto.randomUUID();
-        const latency = Math.floor(Math.random() * 55) + 12;
+        const latency = Math.floor(Math.random() * 45) + 12;
         const outcome = i < Math.round(batchSize * confirmedRatio) ? "confirmed" : "queued";
         supabase.rpc("log_request_metric", {
           p_event_id: eventId,
