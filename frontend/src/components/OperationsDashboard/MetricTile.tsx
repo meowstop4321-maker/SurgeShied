@@ -14,6 +14,7 @@ interface DeltaSpec {
 interface MetricTileProps {
   label: string;
   value: React.ReactNode;
+  icon?: React.ReactNode;
   sub?: string;
   accent?: "default" | "amber" | "rose" | "teal";
   /** Signed change vs. the previous poll — rendered next to the value with a direction arrow. */

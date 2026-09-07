@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { Turnstile, type BoundTurnstileObject } from "react-turnstile";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   Calendar,
@@ -30,7 +31,12 @@ export const EventDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [registering, setRegistering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileController, setTurnstileController] = useState<BoundTurnstileObject | null>(null);
   const [showQR, setShowQR] = useState(false);
+  const turnstileSiteKey = import.meta.env.VITE_TURNSTILE_SITE_KEY || "";
+
+  console.log("Turnstile key:", import.meta.env.VITE_TURNSTILE_SITE_KEY);
 
   const loadData = async () => {
     if (!id) return;
@@ -73,12 +79,16 @@ export const EventDetailPage: React.FC = () => {
       return;
     }
     if (!id) return;
+    if (!turnstileToken) {
+      setError("Please complete the CAPTCHA before registering.");
+      return;
+    }
 
     setRegistering(true);
     setError(null);
 
     try {
-      const res = await registerForEvent(id);
+      const res = await registerForEvent(id, turnstileToken);
       if (res.status === "confirmed") {
         await loadData();
         setShowQR(true);
@@ -91,7 +101,18 @@ export const EventDetailPage: React.FC = () => {
         setError(res.message || "Registration encountered an unexpected issue.");
       }
     } catch (err: any) {
-      setError(err.message || "Failed to contact Surge Router.");
+      const message = err.code === "CAPTCHA_MISSING"
+        ? "Please complete the CAPTCHA before registering."
+        : err.message === "CAPTCHA expired. Please complete the CAPTCHA again."
+          ? err.message
+          : err.message?.includes("verification failed")
+            ? "CAPTCHA verification failed. Please try again."
+            : err.message?.includes("Network failure") || err.message?.includes("unavailable")
+              ? "Network failure while verifying CAPTCHA. Please try again."
+              : err.message || "Failed to contact Surge Router.";
+      setError(message);
+      setTurnstileToken(null);
+      turnstileController?.reset();
     } finally {
       setRegistering(false);
     }
@@ -175,7 +196,7 @@ export const EventDetailPage: React.FC = () => {
             ) : seatsAvailable === 0 ? (
               <button
                 onClick={handleRegister}
-                disabled={registering}
+                disabled={registering || !turnstileToken}
                 className="px-6 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm shadow-lg shadow-amber-500/20 flex items-center gap-2 transition-all disabled:opacity-50"
               >
                 {registering ? (
@@ -193,7 +214,7 @@ export const EventDetailPage: React.FC = () => {
             ) : (
               <button
                 onClick={handleRegister}
-                disabled={registering}
+                disabled={registering || !turnstileToken}
                 className="px-6 py-3 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm shadow-lg shadow-teal-500/20 flex items-center gap-2 transition-all disabled:opacity-50"
               >
                 {registering ? (
@@ -210,6 +231,36 @@ export const EventDetailPage: React.FC = () => {
               </button>
             )}
           </div>
+        </div>
+
+        <div className="border-t border-white/5 pt-4 space-y-2">
+          {turnstileSiteKey ? (
+            <Turnstile
+              sitekey={turnstileSiteKey}
+              theme="dark"
+              refreshExpired="manual"
+              onVerify={(token, controller) => {
+                setTurnstileToken(token);
+                setTurnstileController(controller);
+                setError(null);
+              }}
+              onExpire={(_token, controller) => {
+                setTurnstileToken(null);
+                setTurnstileController(controller);
+                setError("CAPTCHA expired. Please complete the CAPTCHA again.");
+              }}
+              onError={(_captchaError, controller) => {
+                setTurnstileToken(null);
+                setTurnstileController(controller || null);
+                setError("CAPTCHA verification failed. Please try again.");
+              }}
+            />
+          ) : (
+            <p className="text-xs text-amber-300">CAPTCHA is not configured. Registration is unavailable.</p>
+          )}
+          {!turnstileToken && turnstileSiteKey && !error && (
+            <p className="text-xs text-slate-400">Complete the CAPTCHA to enable registration.</p>
+          )}
         </div>
 
         {error && (

@@ -23,8 +23,8 @@ export class WorkerManager {
     this.passportTtlSeconds = options.passportTtlSeconds || 120; // 2-min allotment
 
     this.minWorkers = options.minWorkers ?? 1;
-    this.maxWorkers = options.maxWorkers ?? 10;
-    this.jobsPerWorker = options.jobsPerWorker ?? 3;
+    this.maxWorkers = options.maxWorkers ?? 12;
+    this.jobsPerWorker = options.jobsPerWorker ?? 20;
     this.pollIntervalMs = options.pollIntervalMs ?? 2000;
     this.scaleCheckIntervalMs = options.scaleCheckIntervalMs ?? 3000;
     this.scaleDownCooldownMs = options.scaleDownCooldownMs ?? 10000;
@@ -238,21 +238,11 @@ export class WorkerManager {
 
   calculateTargetWorkers(depth) {
     const totalPending = Number(depth.total_pending || 0);
-    const criticalPending = Number(depth.critical_pending || 0);
+    const target = totalPending <= 20 ? 1
+      : totalPending <= 100 ? 3
+      : totalPending <= 500 ? 6
+      : 12;
 
-    if (totalPending === 0) {
-      return this.minWorkers;
-    }
-
-    // Base target: divide pending jobs across workers based on throughput capacity
-    let target = Math.ceil(totalPending / this.jobsPerWorker);
-
-    // High/Critical priority jobs give instant capacity boost
-    if (criticalPending > 0) {
-      target += Math.ceil(criticalPending / 2);
-    }
-
-    // Clamp within bounds [minWorkers, maxWorkers]
     return Math.max(this.minWorkers, Math.min(this.maxWorkers, target));
   }
 
@@ -392,6 +382,13 @@ export class WorkerManager {
         p_job_id: job.id,
         p_result: result || {},
       });
+      if (job.payload?.registration_id) {
+        await this.admin
+          .from("notification_jobs")
+          .update({ status: "sent", last_error: null })
+          .eq("registration_id", job.payload.registration_id)
+          .eq("status", "queued");
+      }
 
       this.metrics.totalProcessed++;
       worker.jobsCompleted++;
@@ -408,8 +405,19 @@ export class WorkerManager {
           await this.admin.rpc("fail_job", {
             p_job_id: worker.activeJobId,
             p_error: err.message,
-            p_retry_delay_seconds: 15,
           });
+          const failedJob = await this.admin
+            .from("job_queue")
+            .select("payload, status")
+            .eq("id", worker.activeJobId)
+            .maybeSingle();
+          if (failedJob.data?.payload?.registration_id) {
+            await this.admin
+              .from("notification_jobs")
+              .update({ status: failedJob.data.status === "dead_letter" ? "dead_letter" : "failed", last_error: err.message })
+              .eq("registration_id", failedJob.data.payload.registration_id)
+              .eq("status", "queued");
+          }
         } catch {}
         worker.activeJobId = null;
       }
@@ -417,32 +425,10 @@ export class WorkerManager {
     }
   }
 
-  async processLegacyNotification(worker) {
-    try {
-      const { data: jobs } = await this.admin
-        .from("notification_jobs")
-        .select("*")
-        .eq("status", "queued")
-        .or(`next_retry_at.is.null,next_retry_at.lte.${new Date().toISOString()}`)
-        .limit(1);
-
-      if (!jobs || jobs.length === 0) return false;
-      const job = jobs[0];
-
-      worker.activeJobId = `legacy-${job.id}`;
-      const handler = this.handlers.get("confirmation_email");
-      if (handler) {
-        const result = await handler(job);
-        await this.admin.from("notification_jobs").update({ status: "sent", last_error: null }).eq("id", job.id);
-        this.metrics.totalProcessed++;
-        worker.jobsCompleted++;
-      }
-      worker.activeJobId = null;
-      return true;
-    } catch (err) {
-      worker.activeJobId = null;
-      return false;
-    }
+  async processLegacyNotification() {
+    // Legacy notification_jobs are records for the registration UI. New work
+    // is always claimed from job_queue, which provides SKIP LOCKED safety.
+    return false;
   }
 
   // --- Public Management APIs ----------------------------------------------
@@ -478,6 +464,7 @@ export class WorkerManager {
       p_payload: payload,
       p_priority: priority,
       p_scheduled_at: scheduledAt,
+      p_max_attempts: 4,
     });
 
     if (error) throw error;

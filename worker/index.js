@@ -30,7 +30,7 @@ for (const p of envPaths) {
           }
         }
       }
-    } catch {}
+    } catch { }
   }
 }
 
@@ -62,8 +62,8 @@ const workerManager = new WorkerManager({
   passportSecret: SEAT_PASSPORT_SECRET,
   passportTtlSeconds: PASSPORT_TTL_SECONDS,
   minWorkers: 1,
-  maxWorkers: 10,
-  jobsPerWorker: 3,
+  maxWorkers: 12,
+  jobsPerWorker: 20,
   pollIntervalMs: 2000,
   scaleCheckIntervalMs: 3000,
   scaleDownCooldownMs: 10000,
@@ -203,6 +203,12 @@ const app = express();
 // can still reach /health and /manager/stats from a browser origin.
 app.use(cors());
 app.use(express.json());
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", process.env.FRONTEND_ORIGIN || "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
 
 // Auth middleware for administrative/job routes
 const requireWorkerAuth = (req, res, next) => {
@@ -233,7 +239,28 @@ app.get("/manager/stats", (_req, res) => {
   res.status(200).json(workerManager.getStats());
 });
 
-app.get("/jobs/status", requireWorkerAuth, async (_req, res) => {
+app.get("/api/ops/metrics", async (_req, res) => {
+  try {
+    const { data, error } = await workerManager.admin.rpc("get_worker_metrics");
+    if (error) throw error;
+    const stats = workerManager.getStats();
+    res.status(200).json({
+      queue_length: Number(data?.queue_length || 0),
+      active_workers: stats.currentWorkers,
+      processing_rate: Number(data?.processing_rate || 0),
+      avg_latency_ms: Number(data?.avg_latency_ms || 0),
+      failed_jobs: Number(data?.failed_jobs || 0),
+      status: Number(data?.queue_length || 0) > 100 ? "High Load" : stats.currentWorkers > 1 ? "Recovering" : "Healthy",
+      target_workers: workerManager.calculateTargetWorkers(data || {}),
+      observed_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : err?.message || err?.details || String(err);
+    res.status(503).json({ error: message });
+  }
+});
+
+app.get("/jobs/status", async (_req, res) => {
   try {
     const depth = await workerManager.fetchQueueDepth();
     res.status(200).json({ status: "ok", depth, stats: workerManager.getStats() });

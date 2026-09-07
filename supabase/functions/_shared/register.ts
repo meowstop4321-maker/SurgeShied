@@ -274,6 +274,13 @@ export async function registerForEvent(
     .select()
     .single();
   if (job) {
+    const { error: queueError } = await admin.rpc("enqueue_job", {
+      p_job_type: "confirmation_email",
+      p_payload: { event_id: eventId, user_id: userId, lane_index: chosenLane, registration_id: registration.id },
+      p_priority: 8,
+      p_max_attempts: 4,
+    });
+    if (queueError) console.warn("job_queue enqueue failed; notification fallback remains available:", queueError.message);
     await publishBestEffort("notification-jobs", { job_id: job.id, registration_id: registration.id });
   }
 

@@ -7,20 +7,8 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { registerForEvent } from "../_shared/register.ts";
 
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-
-// Anti-bot / retry-storm guard. migrations/0007_antibot.sql defines
-// check_rate_limit() (sliding window + cooldown) but nothing ever called
-// it — a client that double-clicks, or a buggy/malicious script that
-// retries in a hot loop, could hit the registration path with unbounded
-// concurrency, which is exactly the kind of amplification that turns a
-// real surge into a database-connection-exhaustion outage. Keyed per user
-// (post-JWT-verification) rather than per IP, since IP is unreliable
-// behind shared NATs/proxies and every caller here is already authenticated.
-const RATE_LIMIT_MAX_REQUESTS = 8;
-const RATE_LIMIT_WINDOW_SECONDS = 30;
-const RATE_LIMIT_COOLDOWN_SECONDS = 20;
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -33,14 +21,6 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
-}
-
-function background(promise: Promise<unknown>) {
-  const runtime = (globalThis as unknown as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime;
-  const guarded = promise.catch((err) => {
-    console.error("[background] task failed:", err instanceof Error ? err.message : err);
-  });
-  if (runtime?.waitUntil) runtime.waitUntil(guarded);
 }
 
 Deno.serve(async (req) => {
@@ -75,36 +55,9 @@ Deno.serve(async (req) => {
     userId = userData.user.id;
 
     const { event_id } = await req.json().catch(() => ({}));
-    eventId = event_id ?? null;
     if (!event_id) {
       responseStatus = 400;
       return json({ status: "error", message: "event_id is required" }, 400);
-    }
-
-    const { data: rateLimit, error: rateLimitError } = await admin.rpc("check_rate_limit", {
-      p_key: `user:${userId}`,
-      p_max_requests: RATE_LIMIT_MAX_REQUESTS,
-      p_window_seconds: RATE_LIMIT_WINDOW_SECONDS,
-      p_cooldown_seconds: RATE_LIMIT_COOLDOWN_SECONDS,
-    });
-    // Fail OPEN on a rate-limiter error (e.g. migration not applied yet on
-    // an older environment) — registration should degrade gracefully, not
-    // go down because the anti-bot table is unreachable.
-    if (!rateLimitError && rateLimit && rateLimit.allowed === false) {
-      outcome = "rate_limited";
-      responseStatus = 429;
-      background(admin.rpc("append_audit_log", {
-        p_actor_id: userId, p_action: "rate_limited", p_entity: "event", p_entity_id: eventId,
-        p_metadata: { retry_after: rateLimit.retry_after ?? RATE_LIMIT_COOLDOWN_SECONDS },
-      }));
-      return json(
-        {
-          status: "rate_limited",
-          message: "Too many registration attempts — please wait before retrying.",
-          retry_after: rateLimit.retry_after ?? RATE_LIMIT_COOLDOWN_SECONDS,
-        },
-        429,
-      );
     }
 
     const idempotencyKey =

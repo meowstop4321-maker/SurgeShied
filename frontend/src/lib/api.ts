@@ -1,14 +1,5 @@
-import { supabase, FUNCTIONS_URL } from "./supabaseClient";
+import { supabase, FUNCTIONS_URL, WORKER_URL } from "./supabaseClient";
 
-// Distinguishes "the edge function ran and returned a real response" from
-// "the edge function is unreachable" (not deployed, network failure, cold
-// start timeout). supabase-js reports BOTH as `error`, which previously
-// meant a genuine 409 "closed" or 429 "rate_limited" response from
-// surge-router silently fell through to fallbackRegister() below — a
-// second, weaker implementation of the same decision that doesn't know
-// about registration_open, rate limiting, or dynamic lane rebalancing.
-// Only a true network-level failure should reach the fallback; a real HTTP
-// response, even a non-2xx one, should be returned as-is.
 async function authedFetch(path: string, body: Record<string, unknown>) {
   try {
     const { data, error } = await supabase.functions.invoke(path, {
@@ -27,10 +18,23 @@ async function authedFetch(path: string, body: Record<string, unknown>) {
           // Response body wasn't JSON — treat as unreachable, fall through.
         }
       }
-      return null;
+      if (allowFallback) return null;
+      const response = (error as { context?: Response }).context;
+      let message = error.message || "Request failed";
+      let code = "";
+      if (response) {
+        const details = await response.json().catch(() => null) as { message?: string; code?: string } | null;
+        message = details?.message || message;
+        code = details?.code || "";
+      }
+      const registrationError = new Error(message) as Error & { code?: string; status?: number };
+      registrationError.code = code;
+      registrationError.status = response?.status;
+      throw registrationError;
     }
     return data;
-  } catch (_err) {
+  } catch (err) {
+    if (!allowFallback) throw err;
     return null;
   }
 }
@@ -153,10 +157,13 @@ async function fallbackRegister(eventId: string) {
   };
 }
 
-export async function registerForEvent(eventId: string) {
-  const result = await authedFetch("surge-router", { event_id: eventId });
-  if (result) return result;
-  return fallbackRegister(eventId);
+export async function registerForEvent(eventId: string, turnstileToken: string) {
+  const result = await authedFetch("surge-router", {
+    event_id: eventId,
+    turnstile_token: turnstileToken,
+  }, false);
+  if (!result) throw new Error("Network failure while contacting Surge Router.");
+  return result;
 }
 
 // Client simulation fallback
@@ -393,6 +400,27 @@ export async function reprocessDeadLetterJob(jobId: string) {
   const { data, error } = await supabase.rpc("reprocess_dead_letter_job", { p_job_id: jobId });
   if (error) throw error;
   return data;
+}
+
+export interface WorkerMetrics {
+  queue_length: number;
+  active_workers: number;
+  processing_rate: number;
+  avg_latency_ms: number;
+  failed_jobs: number;
+  status: "Healthy" | "High Load" | "Recovering";
+  target_workers: number;
+  observed_at: string;
+}
+
+export async function getWorkerMetrics(): Promise<WorkerMetrics> {
+  if (!WORKER_URL) throw new Error("VITE_WORKER_URL is not configured");
+  const { data } = await supabase.auth.getSession();
+  const response = await fetch(`${WORKER_URL.replace(/\/$/, "")}/api/ops/metrics`, {
+    headers: data.session?.access_token ? { Authorization: `Bearer ${data.session.access_token}` } : undefined,
+  });
+  if (!response.ok) throw new Error(`Worker metrics unavailable (HTTP ${response.status})`);
+  return response.json() as Promise<WorkerMetrics>;
 }
 
 export function subscribeSystemStatus(eventId: string, onChange: (litemode: boolean, reason: string | null) => void) {

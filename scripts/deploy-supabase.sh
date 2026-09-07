@@ -14,6 +14,7 @@ cd "$(dirname "$0")/.."
 [ -f supabase/.env.secrets ] || { echo "supabase/.env.secrets missing — copy supabase/.env.secrets.example and fill it in"; exit 1; }
 set -a; source supabase/.env.secrets; set +a
 : "${SEAT_PASSPORT_SECRET:?supabase/.env.secrets is missing SEAT_PASSPORT_SECRET — must match worker/.env}"
+: "${TURNSTILE_SECRET_KEY:?supabase/.env.secrets is missing TURNSTILE_SECRET_KEY}"
 : "${DEMO_MODE:?supabase/.env.secrets is missing DEMO_MODE}"
 
 echo "==> Linking project ${SUPABASE_PROJECT_REF}"
@@ -23,7 +24,10 @@ echo "==> Pushing migrations (0001-0006)"
 npx supabase db push
 
 echo "==> Setting core secrets"
-npx supabase secrets set SEAT_PASSPORT_SECRET="${SEAT_PASSPORT_SECRET}" DEMO_MODE="${DEMO_MODE}"
+npx supabase secrets set \
+  SEAT_PASSPORT_SECRET="${SEAT_PASSPORT_SECRET}" \
+  TURNSTILE_SECRET_KEY="${TURNSTILE_SECRET_KEY}" \
+  DEMO_MODE="${DEMO_MODE}"
 
 [ -f scripts/.demo-state ] && source scripts/.demo-state
 if [ -n "${GCP_PROJECT_ID:-}" ] && [ -f scripts/.edge-publisher-key.json ]; then
@@ -40,7 +44,8 @@ echo "==> Deploying edge functions (verify_jwt settings come from supabase/confi
 npx supabase functions deploy surge-router
 npx supabase functions deploy simulate
 npx supabase functions deploy verify-audit
+npx supabase functions deploy log-explainer
 
 echo ""
 echo "Supabase side deployed. Functions live at:"
-echo "  \$(supabase status -o env | grep API_URL)/functions/v1/{surge-router,simulate,verify-audit}"
+echo "  \$(supabase status -o env | grep API_URL)/functions/v1/{surge-router,simulate,verify-audit,log-explainer}"
