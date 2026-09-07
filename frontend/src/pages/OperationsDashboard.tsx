@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { CircleDot, Cpu, RefreshCw, TrendingUp, TrendingDown, Minus, MemoryStick } from "lucide-react";
-import { getOpsMetrics, getActiveAlerts, listEvents, OpsMetrics, ActiveAlert } from "../lib/api";
+import { getOpsMetrics, getActiveAlerts, listEvents, simulate, OpsMetrics, ActiveAlert } from "../lib/api";
+import { Zap, RotateCcw } from "lucide-react";
 import { LiteModeBanner } from "../components/LiteModeBanner";
 import { MetricTile } from "../components/OperationsDashboard/MetricTile";
 import { SurgeGauge } from "../components/OperationsDashboard/SurgeGauge";
@@ -14,7 +15,7 @@ import { TrustCard } from "../components/TrustCard";
 import { SimulationPanel } from "../components/SimulationPanel";
 import { LogExplainerCard } from "../components/LogExplainerCard";
 
-const POLL_MS = 3000;
+const POLL_MS = 1500;
 const HISTORY_LEN = 20;
 
 // The handful of tiles worth trending — enough to show direction of travel
@@ -84,6 +85,7 @@ export function OperationsDashboard() {
   const [metrics, setMetrics] = useState<OpsMetrics | null>(null);
   const [alerts, setAlerts] = useState<ActiveAlert[]>([]);
   const [history, setHistory] = useState<MetricHistory>({});
+  const [injecting, setInjecting] = useState(false);
 
   useEffect(() => {
     listEvents().then((data) => {
@@ -92,32 +94,33 @@ export function OperationsDashboard() {
     });
   }, []);
 
+  const fetchLatestMetrics = async () => {
+    if (!eventId) return;
+    try {
+      const [m, a] = await Promise.all([getOpsMetrics(eventId), getActiveAlerts(eventId)]);
+      setMetrics(m);
+      setAlerts(a);
+      setHistory((h) => {
+        const next: MetricHistory = { ...h };
+        HISTORY_KEYS.forEach((k) => {
+          const v = m[k];
+          if (typeof v === "number") {
+            next[k] = [...(h[k] ?? []).slice(-(HISTORY_LEN - 1)), v];
+          }
+        });
+        return next;
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   useEffect(() => {
     if (!eventId) return;
     let cancelled = false;
     async function tick() {
-      try {
-        // Metrics and alerts are fetched together on every tick so every
-        // component on this page (health strip, banners, tiles) is always
-        // looking at the same moment in time instead of drifting apart
-        // across separate polling loops.
-        const [m, a] = await Promise.all([getOpsMetrics(eventId!), getActiveAlerts(eventId!)]);
-        if (cancelled) return;
-        setMetrics(m);
-        setAlerts(a);
-        setHistory((h) => {
-          const next: MetricHistory = { ...h };
-          HISTORY_KEYS.forEach((k) => {
-            const v = m[k];
-            if (typeof v === "number") {
-              next[k] = [...(h[k] ?? []).slice(-(HISTORY_LEN - 1)), v];
-            }
-          });
-          return next;
-        });
-      } catch (err) {
-        console.error(err);
-      }
+      if (cancelled) return;
+      await fetchLatestMetrics();
     }
     tick();
     const interval = setInterval(tick, POLL_MS);
@@ -126,6 +129,32 @@ export function OperationsDashboard() {
       clearInterval(interval);
     };
   }, [eventId]);
+
+  const handleQuickInject = async () => {
+    if (!eventId || injecting) return;
+    setInjecting(true);
+    try {
+      await simulate("load", eventId, 100);
+      await fetchLatestMetrics();
+    } catch (err) {
+      console.error("Traffic injection error:", err);
+    } finally {
+      setInjecting(false);
+    }
+  };
+
+  const handleQuickReset = async () => {
+    if (!eventId || injecting) return;
+    setInjecting(true);
+    try {
+      await simulate("recover_system", eventId);
+      await fetchLatestMetrics();
+    } catch (err) {
+      console.error("Reset capacity error:", err);
+    } finally {
+      setInjecting(false);
+    }
+  };
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12 space-y-8">
@@ -137,19 +166,41 @@ export function OperationsDashboard() {
           </p>
         </div>
 
-        {events.length > 0 && (
-          <select
-            value={eventId ?? ""}
-            onChange={(e) => setEventId(e.target.value)}
-            className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs text-slate-200 focus:outline-none focus:border-teal-500 font-medium"
+        <div className="flex flex-wrap items-center gap-2">
+          {events.length > 0 && (
+            <select
+              value={eventId ?? ""}
+              onChange={(e) => setEventId(e.target.value)}
+              className="bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs text-slate-200 focus:outline-none focus:border-teal-500 font-medium"
+            >
+              {events.map((e) => (
+                <option key={e.id} value={e.id} className="bg-slate-900 text-white">
+                  {e.title}
+                </option>
+              ))}
+            </select>
+          )}
+
+          <button
+            onClick={handleQuickInject}
+            disabled={!eventId || injecting}
+            className="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 font-semibold text-xs flex items-center gap-1.5 transition-all disabled:opacity-50"
+            title="Inject +100 traffic requests to watch metrics and lane saturation spike in real-time"
           >
-            {events.map((e) => (
-              <option key={e.id} value={e.id} className="bg-slate-900 text-white">
-                {e.title}
-              </option>
-            ))}
-          </select>
-        )}
+            <Zap size={14} className={injecting ? "animate-bounce" : ""} />
+            <span>{injecting ? "Injecting Load…" : "+100 Traffic Burst"}</span>
+          </button>
+
+          <button
+            onClick={handleQuickReset}
+            disabled={!eventId || injecting}
+            className="px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 font-semibold text-xs flex items-center gap-1.5 transition-all disabled:opacity-50"
+            title="Reset partition seats and queue to free up capacity"
+          >
+            <RotateCcw size={14} />
+            <span>Reset Capacity</span>
+          </button>
+        </div>
       </div>
 
       {/* The one-second answer to "is everything OK?" — comes first, above

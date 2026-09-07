@@ -92,53 +92,56 @@ function isMuted(action: string): boolean {
 // absence of an error.
 function messageFor(log: AuditLogRow): string {
   const m = log.metadata ?? {};
+  const laneTag = m.lane_index != null ? `[Lane ${m.lane_index}] ` : m.candidate_lane != null ? `[Lane ${m.candidate_lane}] ` : "";
+
   switch (log.action) {
     case "registration_attempt":
-      return `Registration request received`;
+      return `${laneTag}Registration request received → Processing transaction`;
     case "lane_assignment":
-      return `Routing candidate: Lane ${m.candidate_lane} (${m.headroom ?? 0} seats headroom)`;
+      return `${laneTag}Traffic routed to Stripe (${m.headroom ?? 0} seats headroom)`;
     case "registration_confirmed":
-      return `Seat CONFIRMED on Lane ${m.lane_index}${m.seats_taken != null ? ` — ${m.seats_taken}/${m.capacity} seats now taken` : ""}`;
+    case "seat_allocated":
+      return `${laneTag}✅ SUCCESS: Seat Confirmed & Passport Issued${m.seats_taken != null ? ` (${m.seats_taken}/${m.capacity} seats taken)` : ""}`;
     case "seat_reserved":
-      return `Seat held on Lane ${m.lane_index} — booking window open, not yet confirmed`;
+      return `${laneTag}✅ SUCCESS: Seat reserved — hold window active`;
     case "queue_join":
-      return `Joined the waiting queue on Lane ${m.lane_index} at position ${m.position} (${m.reason ?? "all nearby lanes full"})`;
+      return `${laneTag}⏳ QUEUED: Joined waiting queue at position #${m.position ?? "1"} (${m.reason ?? "lane saturated, zero overbooking"})`;
     case "queue_promoted":
-      return `Promoted from queue into Lane ${m.lane_index} — seat confirmed`;
+      return `${laneTag}🚀 PROMOTED: Queue entry upgraded to confirmed seat — passport generated`;
     case "queue_drained":
-      return `Queue cleared on Lane ${m.lane_index} — ${m.reason ?? "no waiting attendees remain"}`;
+      return `${laneTag}Queue cleared — ${m.reason ?? "all waiting attendees processed"}`;
     case "seat_released":
-      return `Ghost seat reclaimed on Lane ${m.lane_index ?? "?"} (expired hold swept back into inventory)`;
+      return `${laneTag}⚠️ RELEASED: Ghost seat reclaimed into inventory`;
     case "rate_limited":
-      return `Request throttled — retry allowed in ${m.retry_after ?? "?"}s`;
+      return `${laneTag}⚠️ THROTTLED: Rate limit hit — cooldown ${m.retry_after ?? "?"}s`;
     case "registration_failed":
-      return `Registration FAILED: ${m.reason ?? m.message ?? m.detail ?? "unknown error"}`;
+      return `${laneTag}❌ FAILED: ${m.reason ?? m.message ?? m.detail ?? "transaction rejected"}`;
     case "job_retry_scheduled":
-      return `${m.job_type ?? "Job"} failed (attempt ${m.attempt}/${m.max_attempts}) — retrying in ${m.retry_in_seconds}s: ${m.error ?? ""}`;
+      return `${laneTag}🔄 RETRY: ${m.job_type ?? "Job"} failed (attempt ${m.attempt}/${m.max_attempts}) — retrying in ${m.retry_in_seconds}s`;
     case "job_dead_lettered":
-      return `${m.job_type ?? "Job"} exhausted ${m.attempts} attempts — moved to Dead Letter Queue: ${m.error ?? ""}`;
+      return `${laneTag}❌ DLQ: ${m.job_type ?? "Job"} exhausted retries — moved to Dead Letter Queue: ${m.error ?? ""}`;
     case "dlq_reprocessed":
-      return `${m.job_type ?? "Job"} manually reprocessed from the Dead Letter Queue`;
+      return `${laneTag}✅ REPROCESSED: ${m.job_type ?? "Job"} replay triggered from Dead Letter Queue`;
     case "circuit_guardian_open":
-      return `Circuit Guardian TRIPPED OPEN — ${m.reason ?? "downstream failures detected"}`;
+      return `🛑 CIRCUIT BREAKER: Tripped OPEN (${m.reason ?? "downstream failures"})`;
     case "circuit_guardian_close":
-      return `Circuit Guardian RESET to closed — traffic flowing normally again`;
+      return `✅ CIRCUIT BREAKER: Reset to CLOSED — normal operations restored`;
     case "worker_scaled_up":
-      return `Worker pool scaled UP: ${m.from_workers} → ${m.to_workers} workers (${m.pending_jobs ?? 0} pending jobs)`;
+      return `⚡ AUTOSCALE UP: Worker pool scaled ${m.from_workers} → ${m.to_workers} workers (${m.pending_jobs ?? 0} pending jobs)`;
     case "worker_scaled_down":
-      return `Worker pool scaled DOWN: ${m.from_workers} → ${m.to_workers} workers (demand subsided)`;
+      return `❄ AUTOSCALE DOWN: Worker pool scaled ${m.from_workers} → ${m.to_workers} workers`;
     case "lane_split":
-      return `Surge partition SPLIT: Lane ${m.lane_index} divided under load`;
+      return `${laneTag}⚡ PARTITION SPLIT: Dynamic lane scaled up under surge pressure`;
     case "lane_merge":
-      return `Surge partitions MERGED: demand subsided, lane count reduced`;
+      return `${laneTag}PARTITIONS MERGED: Capacity consolidated`;
     case "event_created":
-      return `Event "${m.title ?? "untitled"}" created (${m.capacity ?? "?"} seats${m.lane_count ? `, ${m.lane_count} lanes` : ""})`;
+      return `Event "${m.title ?? "untitled"}" initialized with ${m.capacity ?? "?"} seats across ${m.lane_count ?? 4} lanes`;
     case "lite_mode_activated":
-      return `Lite Mode ACTIVATED — ${m.reason ?? "surge detected"}`;
+      return `⚠️ LITE MODE: Graceful degradation activated — non-critical assets shed`;
     case "lite_mode_deactivated":
-      return `Lite Mode deactivated — back to full mode`;
+      return `✅ LITE MODE: Deactivated — full interactive mode restored`;
     default:
-      return log.action.replace(/_/g, " ");
+      return `${laneTag}${log.action.replace(/_/g, " ").toUpperCase()}`;
   }
 }
 

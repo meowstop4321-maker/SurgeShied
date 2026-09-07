@@ -16,7 +16,10 @@ interface AuditLogRow {
 }
 
 const actionBadges: Record<string, { bg: string; text: string; label: string }> = {
-  registration_attempt: { bg: "bg-teal-500/10 border-teal-500/30", text: "text-teal-400", label: "Seat Reserve" },
+  registration_attempt: { bg: "bg-teal-500/10 border-teal-500/30", text: "text-teal-400", label: "Reserve Attempt" },
+  registration_confirmed: { bg: "bg-emerald-500/20 border-emerald-500/40", text: "text-emerald-300", label: "✅ Seat Confirmed" },
+  seat_allocated: { bg: "bg-emerald-500/20 border-emerald-500/40", text: "text-emerald-300", label: "✅ Seat Allocated" },
+  seat_reserved: { bg: "bg-teal-500/20 border-teal-500/40", text: "text-teal-300", label: "Seat Held" },
   lane_assignment: { bg: "bg-blue-500/10 border-blue-500/30", text: "text-blue-400", label: "Pressure Route" },
   event_created: { bg: "bg-purple-500/10 border-purple-500/30", text: "text-purple-400", label: "Event Init" },
   queue_join: { bg: "bg-amber-500/10 border-amber-500/30", text: "text-amber-400", label: "Queue Enter" },
@@ -24,6 +27,9 @@ const actionBadges: Record<string, { bg: string; text: string; label: string }> 
   seat_released: { bg: "bg-rose-500/10 border-rose-500/30", text: "text-rose-400", label: "Ghost Sweep" },
   circuit_guardian_open: { bg: "bg-rose-500/10 border-rose-500/30", text: "text-rose-400", label: "Circuit Trip" },
   circuit_guardian_close: { bg: "bg-emerald-500/10 border-emerald-500/30", text: "text-emerald-400", label: "Circuit Reset" },
+  worker_scaled_up: { bg: "bg-indigo-500/10 border-indigo-500/30", text: "text-indigo-400", label: "⚡ Autoscale Up" },
+  worker_scaled_down: { bg: "bg-slate-500/10 border-slate-500/30", text: "text-slate-400", label: "❄ Autoscale Down" },
+  lane_split: { bg: "bg-cyan-500/10 border-cyan-500/30", text: "text-cyan-400", label: "⚡ Lane Split" },
 };
 
 export function LiveAuditLogTable({ eventId }: { eventId?: string }) {

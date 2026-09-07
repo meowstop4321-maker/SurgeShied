@@ -151,34 +151,42 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
               key={lane.lane_index}
               className={`rounded-xl border p-3.5 space-y-2 transition-all duration-300 ${
                 isOptimal && headroom > 0
-                  ? "bg-teal-950/20 border-teal-500/40 shadow-[0_0_12px_rgba(20,184,166,0.1)]"
-                  : "bg-white/[0.02] border-white/5 hover:border-white/10"
+                  ? "bg-teal-950/30 border-teal-500/50 shadow-[0_0_15px_rgba(20,184,166,0.15)]"
+                  : pct >= 100
+                  ? "bg-rose-950/20 border-rose-500/30"
+                  : "bg-white/[0.03] border-white/10 hover:border-white/20"
               }`}
             >
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-xs">
                 <div className="flex items-center gap-2 font-medium">
-                  <span className="text-slate-200">Lane {lane.lane_index}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="text-slate-100 font-semibold text-sm">Lane {lane.lane_index}</span>
+                  </div>
+                  <span className="text-[10px] bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 px-1.5 py-0.5 rounded font-mono">
+                    ACTIVE
+                  </span>
                   {isOptimal && headroom > 0 && (
-                    <span className="text-[10px] bg-teal-500/20 text-teal-300 border border-teal-500/40 px-1.5 py-0.2 rounded flex items-center gap-1">
-                      ⭐ Recommended Ingress Target
+                    <span className="text-[10px] bg-teal-500/20 text-teal-300 border border-teal-500/40 px-2 py-0.5 rounded flex items-center gap-1 font-semibold">
+                      ⭐ Recommended Ingress
                     </span>
                   )}
                   {pct >= 100 && (
-                    <span className="text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/40 px-1.5 py-0.2 rounded">
-                      Saturated
+                    <span className="text-[10px] bg-rose-500/20 text-rose-300 border border-rose-500/40 px-2 py-0.5 rounded font-semibold">
+                      Saturated (Queue Routing)
                     </span>
                   )}
                 </div>
 
-                <div className="flex items-center gap-3 text-slate-400 font-mono text-[11px]">
+                <div className="flex items-center gap-3 text-slate-300 font-mono text-[11px]">
                   <span>
-                    <span className={pct >= 100 ? "text-rose-400 font-bold" : "text-slate-200 font-semibold"}>
+                    <span className={pct >= 100 ? "text-rose-400 font-bold" : "text-white font-bold"}>
                       {lane.seats_taken}/{lane.capacity}
                     </span>{" "}
                     seated ({pct}%)
                   </span>
                   <span>·</span>
-                  <span className={headroom > 0 ? "text-teal-400" : "text-slate-500"}>
+                  <span className={headroom > 0 ? "text-teal-300 font-semibold" : "text-slate-500"}>
                     {headroom} free
                   </span>
                   {lane.waiting > 0 && (
@@ -194,16 +202,16 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
               </div>
 
               {/* Saturation Bar */}
-              <div className="h-2.5 rounded-full bg-black/40 overflow-hidden border border-white/5">
+              <div className="h-2.5 rounded-full bg-black/50 overflow-hidden border border-white/10">
                 <div
                   className={`h-full rounded-full transition-all duration-500 ${
                     pct >= 100
-                      ? "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]"
+                      ? "bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.6)]"
                       : pct >= 80
-                      ? "bg-amber-400"
-                      : "bg-teal-400 shadow-[0_0_8px_rgba(45,212,191,0.3)]"
+                      ? "bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.5)]"
+                      : "bg-teal-400 shadow-[0_0_8px_rgba(45,212,191,0.4)]"
                   }`}
-                  style={{ width: `${pct}%` }}
+                  style={{ width: `${Math.max(pct, 2)}%` }}
                 />
               </div>
             </div>
