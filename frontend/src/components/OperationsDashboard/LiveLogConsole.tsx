@@ -109,7 +109,9 @@ function messageFor(log: AuditLogRow): string {
     case "seat_reserved":
       return `${laneTag}🎟️ HELD: Seat reserved for ${user} — checkout window active`;
     case "queue_join":
-      return `${laneTag}⏳ QUEUED: Lane capacity reached → ${user} placed in Waiting Queue at #${m.position ?? "1"}`;
+      return m.count
+        ? `${laneTag}⏳ QUEUED: ${m.count} attendees placed in Waiting Queue (${m.reason ?? "lane capacity reached"})`
+        : `${laneTag}⏳ QUEUED: Lane capacity reached → ${user} placed in Waiting Queue at #${m.position ?? "1"}`;
     case "queue_promoted":
       return `${laneTag}🚀 PROMOTED: ${user} upgraded from queue to confirmed seat`;
     case "queue_drained":
