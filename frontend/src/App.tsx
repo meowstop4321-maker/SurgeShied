@@ -1,6 +1,6 @@
 import React from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { AuthProvider } from "./lib/auth";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { AuthProvider, useAuth } from "./lib/auth";
 import { Navbar } from "./components/Navbar";
 import { LandingPage } from "./pages/LandingPage";
 import { AuthPage } from "./pages/AuthPage";
@@ -10,6 +10,14 @@ import { QueueScreen } from "./pages/QueueScreen";
 import { OperationsDashboard } from "./pages/OperationsDashboard";
 import { OrganizerDashboard } from "./pages/OrganizerDashboard";
 import { SimulationPage } from "./pages/SimulationPage";
+
+function OrganizerOnly({ children }: { children: React.ReactNode }) {
+  const { loading, profile } = useAuth();
+  const isOrganizer = profile?.role === "organizer" || profile?.role === "admin";
+
+  if (loading) return null;
+  return isOrganizer ? <>{children}</> : <Navigate to="/events" replace />;
+}
 
 export function App() {
   return (
@@ -24,8 +32,8 @@ export function App() {
               <Route path="/events" element={<EventListPage />} />
               <Route path="/events/:id" element={<EventDetailPage />} />
               <Route path="/queue/:id" element={<QueueScreen />} />
-              <Route path="/ops" element={<OperationsDashboard />} />
-              <Route path="/simulate" element={<SimulationPage />} />
+              <Route path="/ops" element={<OrganizerOnly><OperationsDashboard /></OrganizerOnly>} />
+              <Route path="/simulate" element={<OrganizerOnly><SimulationPage /></OrganizerOnly>} />
               <Route path="/organizer" element={<OrganizerDashboard />} />
             </Routes>
           </main>

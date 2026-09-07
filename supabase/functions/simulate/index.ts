@@ -122,17 +122,24 @@ Deno.serve(async (req) => {
 
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
   const authHeader = req.headers.get("Authorization") ?? "";
-  const apikey = req.headers.get("apikey") ?? "";
   const jwt = authHeader.replace(/^Bearer\s+/i, "");
 
-  let isAuthed = DEMO_MODE || jwt === SERVICE_ROLE_KEY || apikey.length > 0;
-  if (!isAuthed && jwt) {
-    const { data: userData } = await admin.auth.getUser(jwt);
-    if (userData?.user) isAuthed = true;
-  }
+  if (jwt === SERVICE_ROLE_KEY) {
+    // Internal service-role callers remain available for controlled automation.
+  } else {
+    const { data: userData, error: authError } = await admin.auth.getUser(jwt);
+    if (authError || !userData?.user) {
+      return json({ status: "error", message: "unauthenticated" }, 401);
+    }
 
-  if (!isAuthed) {
-    return json({ status: "error", message: "unauthenticated" }, 401);
+    const { data: profile, error: profileError } = await admin
+      .from("profiles")
+      .select("role")
+      .eq("id", userData.user.id)
+      .maybeSingle();
+    if (profileError || (profile?.role !== "organizer" && profile?.role !== "admin")) {
+      return json({ status: "error", message: "organizer access required" }, 403);
+    }
   }
 
   const { action, event_id, count, duration_seconds } = await req.json().catch(() => ({}));

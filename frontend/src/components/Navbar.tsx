@@ -6,6 +6,7 @@ import { useAuth } from "../lib/auth";
 export const Navbar: React.FC = () => {
   const { session, profile, signOut } = useAuth();
   const location = useLocation();
+  const isOrganizer = profile?.role === "organizer" || profile?.role === "admin";
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -36,25 +37,29 @@ export const Navbar: React.FC = () => {
             >
               Events
             </Link>
-            <Link
-              to="/ops"
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center space-x-1.5 transition-colors ${
-                isActive("/ops") ? "text-teal-300 bg-white/5" : "text-slate-400 hover:text-slate-200 hover:bg-white/[0.02]"
-              }`}
-            >
-              <Activity className="w-4 h-4 text-teal-400" />
-              <span>Operations</span>
-            </Link>
-            <Link
-              to="/simulate"
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center space-x-1.5 transition-colors ${
-                isActive("/simulate") ? "text-amber-300 bg-white/5" : "text-slate-400 hover:text-slate-200 hover:bg-white/[0.02]"
-              }`}
-            >
-              <Terminal className="w-4 h-4 text-amber-400" />
-              <span>Simulate</span>
-            </Link>
-            {profile?.role === "organizer" || profile?.role === "admin" ? (
+            {isOrganizer ? (
+              <>
+                <Link
+                  to="/ops"
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center space-x-1.5 transition-colors ${
+                    isActive("/ops") ? "text-teal-300 bg-white/5" : "text-slate-400 hover:text-slate-200 hover:bg-white/[0.02]"
+                  }`}
+                >
+                  <Activity className="w-4 h-4 text-teal-400" />
+                  <span>Operations</span>
+                </Link>
+                <Link
+                  to="/simulate"
+                  className={`px-3 py-1.5 rounded-lg text-sm font-medium flex items-center space-x-1.5 transition-colors ${
+                    isActive("/simulate") ? "text-amber-300 bg-white/5" : "text-slate-400 hover:text-slate-200 hover:bg-white/[0.02]"
+                  }`}
+                >
+                  <Terminal className="w-4 h-4 text-amber-400" />
+                  <span>Simulate</span>
+                </Link>
+              </>
+            ) : null}
+            {isOrganizer ? (
               <Link
                 to="/organizer"
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${

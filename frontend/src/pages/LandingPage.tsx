@@ -1,5 +1,6 @@
 import React from "react";
 import { Link } from "react-router-dom";
+import { useAuth } from "../lib/auth";
 import {
   Shield,
   Layers,
@@ -15,6 +16,8 @@ import {
 } from "lucide-react";
 
 export const LandingPage: React.FC = () => {
+  const { profile } = useAuth();
+  const isOrganizer = profile?.role === "organizer" || profile?.role === "admin";
   return (
     <div className="space-y-20 pb-20">
       {/* Hero Section */}
@@ -43,20 +46,24 @@ export const LandingPage: React.FC = () => {
             <span>Explore Live Events</span>
             <ArrowRight size={16} />
           </Link>
-          <Link
-            to="/ops"
-            className="px-6 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-100 border border-white/10 font-semibold text-sm flex items-center gap-2 transition-all"
-          >
-            <Activity size={16} className="text-teal-400" />
-            <span>Operations Dashboard</span>
-          </Link>
-          <Link
-            to="/simulate"
-            className="px-6 py-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold text-sm flex items-center gap-2 transition-all"
-          >
-            <Zap size={16} className="text-amber-400" />
-            <span>Stress Test Simulator</span>
-          </Link>
+          {isOrganizer ? (
+            <>
+              <Link
+                to="/ops"
+                className="px-6 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-100 border border-white/10 font-semibold text-sm flex items-center gap-2 transition-all"
+              >
+                <Activity size={16} className="text-teal-400" />
+                <span>Operations Dashboard</span>
+              </Link>
+              <Link
+                to="/simulate"
+                className="px-6 py-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold text-sm flex items-center gap-2 transition-all"
+              >
+                <Zap size={16} className="text-amber-400" />
+                <span>Stress Test Simulator</span>
+              </Link>
+            </>
+          ) : null}
         </div>
       </section>
 

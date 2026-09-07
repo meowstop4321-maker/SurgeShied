@@ -21,11 +21,8 @@ const HISTORY_LEN = 20;
 // without turning every stat into a chart (per the dataviz method: a
 // sparkline earns its place only where "is this climbing?" is the question).
 const HISTORY_KEYS = [
-  "active_users",
   "requests_per_sec",
   "successful_registrations",
-  "queue_length",
-  "avg_response_time_ms",
   "cpu_percent",
 ] as const;
 type HistoryKey = (typeof HISTORY_KEYS)[number];
@@ -75,7 +72,6 @@ function trendProps(
   return { trend: h, delta: { value, goodDirection: opts?.goodDirection, format: opts?.format } };
 }
 
-const fmtMs = (v: number) => `${v > 0 ? "+" : ""}${Math.round(v)}ms`;
 const fmtPct = (v: number) => `${v > 0 ? "+" : ""}${v.toFixed(0)}%`;
 
 export function OperationsDashboard() {
@@ -169,12 +165,7 @@ export function OperationsDashboard() {
         <div className="space-y-6">
           {/* Traffic & Registrations */}
           <SectionLabel>Traffic & Registrations</SectionLabel>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <MetricTile
-              label="Active Users (60s)"
-              value={metrics.active_users}
-              {...trendProps(history, "active_users")}
-            />
+          <div className="grid grid-cols-2 sm:grid-cols-2 gap-4">
             <MetricTile
               label="Requests/sec"
               value={metrics.requests_per_sec.toFixed(1)}
@@ -186,28 +177,16 @@ export function OperationsDashboard() {
               accent="teal"
               {...trendProps(history, "successful_registrations", { goodDirection: "up" })}
             />
-            <MetricTile
-              label="Failed Registrations"
-              value={metrics.failed_registrations}
-              accent={metrics.failed_registrations > 0 ? "rose" : "default"}
-            />
           </div>
 
           {/* Queue & Job Processing */}
           <SectionLabel>Queue & Job Processing</SectionLabel>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <MetricTile
-              label="Queue size"
-              value={metrics.queue_length}
-              accent={metrics.queue_length > 20 ? "amber" : "default"}
-              {...trendProps(history, "queue_length", { goodDirection: "down" })}
-            />
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             <MetricTile
               label="Queue processing rate"
               value={`${metrics.queue_processing_rate_per_min}/min`}
               sub="promotions in last 60s"
             />
-            <MetricTile label="Pending jobs" value={metrics.pending_jobs} />
             <MetricTile
               label="Retry count"
               value={metrics.retry_count}
@@ -229,22 +208,7 @@ export function OperationsDashboard() {
 
           {/* Latency & Performance */}
           <SectionLabel>Latency & Performance</SectionLabel>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <MetricTile
-              label="Avg response time"
-              value={`${metrics.avg_response_time_ms} ms`}
-              {...trendProps(history, "avg_response_time_ms", { goodDirection: "down", format: fmtMs })}
-            />
-            <MetricTile
-              label="P95 latency"
-              value={`${metrics.p95_latency_ms} ms`}
-              accent={metrics.p95_latency_ms > 3000 ? "amber" : "default"}
-            />
-            <MetricTile
-              label="P99 latency"
-              value={`${metrics.p99_latency_ms} ms`}
-              accent={metrics.p99_latency_ms > 5000 ? "amber" : "default"}
-            />
+          <div className="grid grid-cols-2 sm:grid-cols-2 gap-4">
             <MetricTile
               label="CPU usage"
               value={

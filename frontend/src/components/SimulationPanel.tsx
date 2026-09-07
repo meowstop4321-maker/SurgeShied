@@ -102,8 +102,8 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({ eventId }) => 
               count >= 100000
                 ? "Lite Mode Active (1,666 req/s absorbed)"
                 : m.queue_length > 100
-                ? "Queue Buffer Ingress Active"
-                : "None (Zero Bottlenecks)",
+                  ? "Queue Buffer Ingress Active"
+                  : "None (Zero Bottlenecks)",
           }));
         }
       }
