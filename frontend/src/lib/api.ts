@@ -1,6 +1,6 @@
 import { supabase, FUNCTIONS_URL, WORKER_URL } from "./supabaseClient";
 
-async function authedFetch(path: string, body: Record<string, unknown>) {
+async function authedFetch(path: string, body: Record<string, unknown>, allowFallback = true) {
   try {
     const { data, error } = await supabase.functions.invoke(path, {
       body,
@@ -10,10 +10,23 @@ async function authedFetch(path: string, body: Record<string, unknown>) {
     });
 
     if (error) {
-      return null;
+      if (allowFallback) return null;
+      const response = (error as { context?: Response }).context;
+      let message = error.message || "Request failed";
+      let code = "";
+      if (response) {
+        const details = await response.json().catch(() => null) as { message?: string; code?: string } | null;
+        message = details?.message || message;
+        code = details?.code || "";
+      }
+      const registrationError = new Error(message) as Error & { code?: string; status?: number };
+      registrationError.code = code;
+      registrationError.status = response?.status;
+      throw registrationError;
     }
     return data;
-  } catch (_err) {
+  } catch (err) {
+    if (!allowFallback) throw err;
     return null;
   }
 }
@@ -92,10 +105,13 @@ async function fallbackRegister(eventId: string) {
   };
 }
 
-export async function registerForEvent(eventId: string) {
-  const result = await authedFetch("surge-router", { event_id: eventId });
-  if (result) return result;
-  return fallbackRegister(eventId);
+export async function registerForEvent(eventId: string, turnstileToken: string) {
+  const result = await authedFetch("surge-router", {
+    event_id: eventId,
+    turnstile_token: turnstileToken,
+  }, false);
+  if (!result) throw new Error("Network failure while contacting Surge Router.");
+  return result;
 }
 
 // Client simulation fallback
