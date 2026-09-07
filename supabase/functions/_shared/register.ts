@@ -95,10 +95,34 @@ export async function registerForEvent(
     .order("lane_index", { ascending: true });
   if (lanesError || !lanes?.length) return { status: 500, body: { status: "error", message: "no lanes configured" } };
 
-  const ranked = [...lanes]
-    .map((l) => ({ ...l, headroom: l.capacity - l.seats_taken }))
+  const { data: queueLens } = await admin.rpc("get_queue_lengths", { p_event_id: eventId });
+  const countByLane = new Map<number, number>(
+    (queueLens ?? []).map((r: { lane_index: number; waiting_count: number }) => [r.lane_index, r.waiting_count]),
+  );
+
+  // Dynamic Least-Loaded Multi-Lane Routing:
+  // Load = (waiting in queue + seats_taken). Tie-break among least-loaded lanes via user hash.
+  const rankedCandidates = [...lanes]
+    .map((l) => {
+      const waiting = countByLane.get(l.lane_index) ?? 0;
+      const headroom = Math.max(0, l.capacity - l.seats_taken);
+      const currentLoad = l.seats_taken + waiting;
+      return { ...l, waiting, headroom, currentLoad };
+    })
     .filter((l) => l.headroom > 0)
-    .sort((a, b) => b.headroom / b.capacity - a.headroom / a.capacity);
+    .sort((a, b) => {
+      if (a.currentLoad !== b.currentLoad) return a.currentLoad - b.currentLoad;
+      return (b.headroom / b.capacity) - (a.headroom / a.capacity);
+    });
+
+  let ranked = rankedCandidates;
+  if (rankedCandidates.length > 1) {
+    const minLoad = rankedCandidates[0].currentLoad;
+    const tied = rankedCandidates.filter((l) => l.currentLoad === minLoad);
+    const userHash = userId.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0);
+    const selectedTied = tied[userHash % tied.length];
+    ranked = [selectedTied, ...rankedCandidates.filter((l) => l.lane_index !== selectedTied.lane_index)];
+  }
 
   const avgSaturation = lanes.reduce((s, l) => s + l.seats_taken / l.capacity, 0) / lanes.length;
   const { count: queueLen } = await admin
@@ -115,23 +139,13 @@ export async function registerForEvent(
   });
 
   // Dynamic (Elastic) Surge Partitions: while a surge is active, nudge the
-  // lane count toward what current demand justifies. rebalance_lanes()
-  // itself moves at most one lane per call and is guarded by a per-event
-  // advisory lock, so it's safe for many concurrent requests to all fire
-  // this — only one of them actually does the work each time. Never
-  // awaited on the response path: a rebalance should never be why a
-  // registration request got slower during the exact moment latency
-  // matters most.
+  // lane count toward what current demand justifies.
   if (isSurge) {
     background(admin.rpc("rebalance_lanes", { p_event_id: eventId }));
   }
 
   // Helper to place user in the optimal waiting queue lane
   const enqueueUser = async () => {
-    const { data: queueLens } = await admin.rpc("get_queue_lengths", { p_event_id: eventId });
-    const countByLane = new Map<number, number>(
-      (queueLens ?? []).map((r: { lane_index: number; waiting_count: number }) => [r.lane_index, r.waiting_count]),
-    );
     const laneQueueLens = lanes.map((l) => {
       const qCount = countByLane.get(l.lane_index) ?? 0;
       return {
@@ -152,10 +166,6 @@ export async function registerForEvent(
       return { status: 500, body: { status: "error", message: "join queue failed" } };
     }
 
-    // Was previously invisible in the audit trail/log stream entirely — a
-    // judge watching the log had no way to see WHY someone landed in the
-    // queue (all lanes full vs. shortest-wait tie-break) versus getting a
-    // seat directly.
     background(admin.rpc("append_audit_log", {
       p_actor_id: userId,
       p_action: "queue_join",
@@ -182,12 +192,19 @@ export async function registerForEvent(
     return await enqueueUser();
   }
 
+  const chosenIngress = ranked[0];
   await admin.rpc("append_audit_log", {
     p_actor_id: userId,
     p_action: "lane_assignment",
     p_entity: "event",
     p_entity_id: eventId,
-    p_metadata: { candidate_lane: ranked[0].lane_index, headroom: ranked[0].headroom, ranked_lanes: ranked.map((l) => l.lane_index) },
+    p_metadata: {
+      candidate_lane: chosenIngress.lane_index,
+      headroom: chosenIngress.headroom,
+      waiting: chosenIngress.waiting,
+      current_load: chosenIngress.currentLoad,
+      ranked_lanes: ranked.map((l) => l.lane_index),
+    },
   });
 
   let registration = null;
