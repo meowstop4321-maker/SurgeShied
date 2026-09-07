@@ -183,11 +183,6 @@ export function OperationsDashboard() {
           <SectionLabel>Queue & Job Processing</SectionLabel>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
             <MetricTile
-              label="Queue processing rate"
-              value={`${metrics.queue_processing_rate_per_min}/min`}
-              sub="promotions in last 60s"
-            />
-            <MetricTile
               label="Retry count"
               value={metrics.retry_count}
               accent={metrics.retry_count > 0 ? "amber" : "default"}
