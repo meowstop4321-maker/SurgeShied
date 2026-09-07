@@ -79,7 +79,7 @@ export const EventDetailPage: React.FC = () => {
       return;
     }
     if (!id) return;
-    if (!turnstileToken) {
+    if (turnstileSiteKey && !turnstileToken) {
       setError("Please complete the CAPTCHA before registering.");
       return;
     }
@@ -88,7 +88,7 @@ export const EventDetailPage: React.FC = () => {
     setError(null);
 
     try {
-      const res = await registerForEvent(id, turnstileToken);
+      const res = await registerForEvent(id, turnstileToken || undefined);
       if (res.status === "confirmed") {
         await loadData();
         setShowQR(true);
@@ -196,7 +196,7 @@ export const EventDetailPage: React.FC = () => {
             ) : seatsAvailable === 0 ? (
               <button
                 onClick={handleRegister}
-                disabled={registering || !turnstileToken}
+                disabled={registering || (!!turnstileSiteKey && !turnstileToken)}
                 className="px-6 py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm shadow-lg shadow-amber-500/20 flex items-center gap-2 transition-all disabled:opacity-50"
               >
                 {registering ? (
@@ -214,7 +214,7 @@ export const EventDetailPage: React.FC = () => {
             ) : (
               <button
                 onClick={handleRegister}
-                disabled={registering || !turnstileToken}
+                disabled={registering || (!!turnstileSiteKey && !turnstileToken)}
                 className="px-6 py-3 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-sm shadow-lg shadow-teal-500/20 flex items-center gap-2 transition-all disabled:opacity-50"
               >
                 {registering ? (
@@ -233,8 +233,8 @@ export const EventDetailPage: React.FC = () => {
           </div>
         </div>
 
-        <div className="border-t border-white/5 pt-4 space-y-2">
-          {turnstileSiteKey ? (
+        {turnstileSiteKey ? (
+          <div className="border-t border-white/5 pt-4 space-y-2">
             <Turnstile
               sitekey={turnstileSiteKey}
               theme="dark"
@@ -255,13 +255,11 @@ export const EventDetailPage: React.FC = () => {
                 setError("CAPTCHA verification failed. Please try again.");
               }}
             />
-          ) : (
-            <p className="text-xs text-amber-300">CAPTCHA is not configured. Registration is unavailable.</p>
-          )}
-          {!turnstileToken && turnstileSiteKey && !error && (
-            <p className="text-xs text-slate-400">Complete the CAPTCHA to enable registration.</p>
-          )}
-        </div>
+            {!turnstileToken && !error && (
+              <p className="text-xs text-slate-400">Complete the CAPTCHA to enable registration.</p>
+            )}
+          </div>
+        ) : null}
 
         {error && (
           <div className="p-3.5 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">

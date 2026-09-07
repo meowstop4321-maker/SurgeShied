@@ -109,19 +109,22 @@ Deno.serve(async (req) => {
     }
     userId = userData.user.id;
 
-    const { event_id } = await req.json().catch(() => ({}));
+    const { event_id, turnstile_token } = await req.json().catch(() => ({}));
     eventId = event_id ?? null;
     if (!event_id) {
       responseStatus = 400;
       return json({ status: "error", message: "event_id is required" }, 400);
     }
-    if (typeof turnstile_token !== "string" || !turnstile_token) {
-      return json({ status: "error", code: "CAPTCHA_MISSING", message: "CAPTCHA verification is required" }, 403);
-    }
 
-    const captcha = await verifyTurnstile(turnstile_token, req.headers.get("CF-Connecting-IP"));
-    if (!captcha.ok) {
-      return json({ status: "error", code: "CAPTCHA_VERIFICATION_FAILED", message: captcha.message }, captcha.status);
+    if (TURNSTILE_SECRET_KEY) {
+      if (typeof turnstile_token !== "string" || !turnstile_token) {
+        return json({ status: "error", code: "CAPTCHA_MISSING", message: "CAPTCHA verification is required" }, 403);
+      }
+
+      const captcha = await verifyTurnstile(turnstile_token, req.headers.get("CF-Connecting-IP"));
+      if (!captcha.ok) {
+        return json({ status: "error", code: "CAPTCHA_VERIFICATION_FAILED", message: captcha.message }, captcha.status);
+      }
     }
 
     const { data: rateLimit, error: rateLimitError } = await admin.rpc("check_rate_limit", {

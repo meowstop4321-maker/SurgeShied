@@ -157,10 +157,10 @@ async function fallbackRegister(eventId: string) {
   };
 }
 
-export async function registerForEvent(eventId: string, turnstileToken: string) {
+export async function registerForEvent(eventId: string, turnstileToken?: string) {
   const result = await authedFetch("surge-router", {
     event_id: eventId,
-    turnstile_token: turnstileToken,
+    turnstile_token: turnstileToken || "",
   }, false);
   if (!result) throw new Error("Network failure while contacting Surge Router.");
   return result;
