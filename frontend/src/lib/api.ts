@@ -1,6 +1,6 @@
 import { supabase, FUNCTIONS_URL, WORKER_URL } from "./supabaseClient";
 
-async function authedFetch(path: string, body: Record<string, unknown>) {
+async function authedFetch(path: string, body: Record<string, unknown>, allowFallback = true) {
   try {
     const { data, error } = await supabase.functions.invoke(path, {
       body,
