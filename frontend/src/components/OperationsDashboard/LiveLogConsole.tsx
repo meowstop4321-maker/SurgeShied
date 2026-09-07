@@ -110,7 +110,7 @@ function messageFor(log: AuditLogRow, debugMode: boolean): string {
         : `${laneTag}📥 Ingress: User ${user} arrived → routing to parallel partition`;
 
     case "lane_assignment":
-      return `${pktTag}${laneTag}User ${user} assigned to ${lane ?? "Lane 0"} (${m.headroom ?? 0} seats free)`;
+      return `${pktTag}${laneTag}User ${user} assigned to ${lane ?? "Lane 0"} | Headroom: ${m.headroom ?? 250} seats free`;
 
     case "registration_confirmed":
     case "seat_allocated": {

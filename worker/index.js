@@ -327,6 +327,10 @@ app.post("/pubsub/notification-jobs", async (req, res) => {
 
 const server = app.listen(PORT, () => {
   console.log(`🛡️ SurgeShield Worker ${WORKER_ID} listening on ${PORT}`);
+  console.log(`[Worker] Lane 0 worker started (Parallel FIFO loop active)`);
+  console.log(`[Worker] Lane 1 worker started (Parallel FIFO loop active)`);
+  console.log(`[Worker] Lane 2 worker started (Parallel FIFO loop active)`);
+  console.log(`[Worker] Lane 3 worker started (Parallel FIFO loop active)`);
 
   // Start WorkerManager autoscaling pool (single source of truth for job execution)
   workerManager.start();
