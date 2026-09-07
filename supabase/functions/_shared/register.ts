@@ -10,7 +10,7 @@ const SEAT_PASSPORT_SECRET = Deno.env.get("SEAT_PASSPORT_SECRET") ?? "39e833befa
 const INITIAL_BOOKING_TTL_SECONDS = 2 * 60; // 2 minutes to complete booking
 const MAX_BOOKING_TTL_SECONDS = 6 * 60;     // 6 minutes maximum allowed extension
 const SURGE_QUEUE_LEN_THRESHOLD = 20;
-const SURGE_LANE_SATURATION_THRESHOLD = 0.9;
+const SURGE_LANE_SATURATION_THRESHOLD = 0.25;
 const ESTIMATED_SECONDS_PER_BOOKING = 120;  // 2 minutes average booking throughput
 
 export type RegisterResult = { status: number; body: Record<string, unknown> };
