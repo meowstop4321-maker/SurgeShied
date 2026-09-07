@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Play, Users, Zap, MailX, AlertTriangle, RefreshCw, CheckCircle2 } from "lucide-react";
+import { Play, Users, Zap, AlertTriangle, RefreshCw, CheckCircle2 } from "lucide-react";
 import { simulate } from "../lib/api";
 
 interface SimulationPanelProps {
@@ -96,19 +96,6 @@ export const SimulationPanel: React.FC<SimulationPanelProps> = ({ eventId }) => 
           </div>
           <div className="text-sm font-semibold text-white mt-2">Simulate Surge</div>
           <div className="text-[11px] text-slate-400">Crowd Pressure Routing</div>
-        </button>
-
-        <button
-          onClick={() => runSim("trigger_email_failure")}
-          disabled={loading !== null}
-          className="p-3 rounded-lg border border-rose-500/20 bg-rose-500/5 hover:bg-rose-500/10 text-left transition-all group disabled:opacity-50"
-        >
-          <div className="flex items-center justify-between text-rose-400">
-            <MailX size={18} />
-            <Play size={14} className="opacity-0 group-hover:opacity-100 transition-opacity" />
-          </div>
-          <div className="text-sm font-semibold text-white mt-2">Email Failure</div>
-          <div className="text-[11px] text-slate-400">Trip Circuit Guardian</div>
         </button>
 
         <button
