@@ -277,6 +277,8 @@ export function OperationsDashboard() {
 
           <TrustCard />
 
+          {eventId && <SimulationPanel eventId={eventId} />}
+
           {eventId && <PartitionBoard eventId={eventId} />}
 
           <LiveLogConsole eventId={eventId ?? undefined} />
@@ -286,8 +288,6 @@ export function OperationsDashboard() {
           {eventId && <LogExplainerCard eventId={eventId} />}
 
           {eventId && <LiveAuditLogTable eventId={eventId} />}
-
-          {eventId && <SimulationPanel eventId={eventId} />}
         </div>
       )}
     </div>
