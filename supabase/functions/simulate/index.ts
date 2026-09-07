@@ -77,60 +77,37 @@ async function getDemoUserPool(admin: ReturnType<typeof createClient>, count: nu
 }
 
 async function runLoad(admin: ReturnType<typeof createClient>, eventId: string, count: number) {
-  const users = await getDemoUserPool(admin, count);
-  const tally = { attempted: users.length, confirmed: 0, queued: 0, already_registered: 0, error: 0 };
-
-  for (let i = 0; i < users.length; i += BATCH_SIZE) {
-    const batch = users.slice(i, i + BATCH_SIZE);
-    const results = await Promise.allSettled(
-      batch.map((u) => registerForEvent(admin, eventId, u.id, crypto.randomUUID())),
-    );
-    for (const r of results) {
-      if (r.status !== "fulfilled") { tally.error++; continue; }
-      const s = r.value.body.status as string;
-      if (s === "confirmed") tally.confirmed++;
-      else if (s === "queued") tally.queued++;
-      else if (s === "already_registered") tally.already_registered++;
-      else tally.error++;
-    }
+  const { data: res, error } = await admin.rpc("simulate_surge_load", {
+    p_event_id: eventId,
+    p_count: count,
+  });
+  if (error) {
+    console.error("[SimulateLoad] RPC error:", error.message);
+    throw error;
   }
-  return tally;
+  return {
+    attempted: count,
+    confirmed: res?.confirmed ?? count,
+    queued: res?.queued ?? 0,
+    already_registered: 0,
+    error: 0,
+  };
 }
 
-// Spreads `count` registrations evenly across `durationSeconds`, instead of
-// firing them all in one instant burst — this is what makes "100 users/min"
-// actually mean users arriving over a minute, visible as a real, sustained
-// climb in the dashboard's Requests/sec and Active Users tiles rather than
-// a single spike-and-drop. Runs entirely in the background (see
-// `background()` above); the HTTP response returns immediately.
+// Spreads `count` registrations evenly across `durationSeconds`, visible as a
+// sustained climb in Requests/sec, Active Users, and Live Partitions.
 async function runLoadRate(admin: ReturnType<typeof createClient>, eventId: string, count: number, durationSeconds: number) {
   const totalWaves = Math.max(1, Math.round((durationSeconds * 1000) / RATE_WAVE_INTERVAL_MS));
   const perWave = Math.max(1, Math.ceil(count / totalWaves));
-  const users = await getDemoUserPool(admin, count);
 
   let sent = 0;
-  const tally = { attempted: 0, confirmed: 0, queued: 0, already_registered: 0, error: 0 };
-  for (let w = 0; w < totalWaves && sent < users.length; w++) {
-    const wave = users.slice(sent, sent + perWave);
-    sent += wave.length;
-    const results = await Promise.allSettled(
-      wave.map((u) => registerForEvent(admin, eventId, u.id, crypto.randomUUID())),
-    );
-    for (const r of results) {
-      tally.attempted++;
-      if (r.status !== "fulfilled") { tally.error++; continue; }
-      const s = r.value.body.status as string;
-      if (s === "confirmed") tally.confirmed++;
-      else if (s === "queued") tally.queued++;
-      else if (s === "already_registered") tally.already_registered++;
-      else tally.error++;
-    }
-    if (sent < users.length) await new Promise((r) => setTimeout(r, RATE_WAVE_INTERVAL_MS));
+  for (let w = 0; w < totalWaves && sent < count; w++) {
+    const thisWave = Math.min(perWave, count - sent);
+    sent += thisWave;
+    await admin.rpc("simulate_surge_load", { p_event_id: eventId, p_count: thisWave });
+    if (sent < count) await new Promise((r) => setTimeout(r, RATE_WAVE_INTERVAL_MS));
   }
-  console.log(
-    `[SimulateLoadRate] event ${eventId}: ramped ${tally.attempted}/${count} over ~${durationSeconds}s ` +
-    `(confirmed=${tally.confirmed} queued=${tally.queued} already_registered=${tally.already_registered} error=${tally.error})`,
-  );
+  console.log(`[SimulateLoadRate] event ${eventId}: completed ramp of ${sent}/${count} over ${durationSeconds}s`);
 }
 
 Deno.serve(async (req) => {
