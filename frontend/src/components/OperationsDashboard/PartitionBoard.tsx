@@ -10,6 +10,9 @@ import {
   RotateCw,
   Gauge,
   Sparkles,
+  TrendingUp,
+  ShieldAlert,
+  Flame,
 } from "lucide-react";
 import { getSeatPartitions, subscribeSeatPartitions } from "../../lib/api";
 import { supabase } from "../../lib/supabaseClient";
@@ -40,7 +43,8 @@ interface WaitingUserCard {
 export function PartitionBoard({ eventId }: { eventId: string }) {
   const [lanes, setLanes] = useState<LaneRow[]>([]);
   const [waitingCards, setWaitingCards] = useState<WaitingUserCard[]>([]);
-  const [recentAdded, setRecentAdded] = useState<number>(0);
+  const [newlyScaledLanes, setNewlyScaledLanes] = useState<Set<number>>(new Set());
+  const prevLanesRef = useRef<Set<number>>(new Set());
   const prevSeatedRef = useRef<Map<number, number>>(new Map());
   const lastTickTimeRef = useRef<number>(Date.now());
 
@@ -49,6 +53,29 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
 
     try {
       const partitions = await getSeatPartitions(eventId);
+
+      // Detect newly scaled out lanes
+      const currentLaneIndices = new Set(partitions.map((p) => p.lane_index));
+      if (prevLanesRef.current.size > 0) {
+        const added: number[] = [];
+        currentLaneIndices.forEach((idx) => {
+          if (!prevLanesRef.current.has(idx)) {
+            added.push(idx);
+          }
+        });
+
+        if (added.length > 0) {
+          setNewlyScaledLanes((prev) => new Set([...prev, ...added]));
+          setTimeout(() => {
+            setNewlyScaledLanes((prev) => {
+              const next = new Set(prev);
+              added.forEach((idx) => next.delete(idx));
+              return next;
+            });
+          }, 6000);
+        }
+      }
+      prevLanesRef.current = currentLaneIndices;
 
       // Fetch waiting queue entries for live position cards & counts
       const { data: waitingRows } = await supabase
@@ -100,9 +127,6 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
       const elapsedSec = Math.max(1, (now - lastTickTimeRef.current) / 1000);
       lastTickTimeRef.current = now;
 
-      const currentTotal = partitions.reduce((s, p) => s + (p.seats_taken || 0), 0);
-      setRecentAdded(currentTotal);
-
       // Map enriched lane telemetry
       const nextLanes: LaneRow[] = partitions.map((p) => {
         const prev = prevSeatedRef.current.get(p.lane_index) ?? p.seats_taken;
@@ -111,7 +135,7 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
         prevSeatedRef.current.set(p.lane_index, p.seats_taken);
 
         const waitCount = waitingByLane.get(p.lane_index) ?? 0;
-        const procCount = processingByLane.get(p.lane_index) ?? (p.seats_taken > 0 ? Math.min(3, p.seats_taken) : 0);
+        const procCount = processingByLane.get(p.lane_index) ?? (p.seats_taken > 0 ? Math.min(2, p.seats_taken) : 0);
         const avgWait = parseFloat(((waitCount + 1) * 2.1).toFixed(1));
 
         return {
@@ -130,7 +154,7 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
 
       setLanes(nextLanes);
 
-      // Build top 8 visual queue position cards
+      // Build top visual queue position cards
       const laneCounters = new Map<number, number>();
       const cards: WaitingUserCard[] = (waitingRows ?? []).slice(0, 8).map((entry) => {
         const currentPos = (laneCounters.get(entry.lane_index) ?? 0) + 1;
@@ -174,6 +198,7 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
   const totalProcessing = lanes.reduce((s, l) => s + l.processing, 0);
   const totalThroughput = lanes.reduce((s, l) => s + l.throughput, 0);
   const totalHeadroom = Math.max(0, totalCapacity - totalSeated);
+  const saturationPct = totalCapacity > 0 ? Math.round((totalSeated / totalCapacity) * 100) : 0;
 
   const optimalLane = [...lanes]
     .sort((a, b) => {
@@ -185,22 +210,32 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
 
   return (
     <div className="rounded-xl border border-white/10 bg-slate-900/40 p-5 space-y-6 backdrop-blur-md">
-      {/* Header & Dynamic Telemetry Summary */}
+      {/* Header & Elastic Autoscaling State */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-4">
         <div>
           <div className="flex items-center gap-2">
             <Layers className="w-5 h-5 text-teal-400" />
-            <h3 className="text-sm font-semibold text-slate-100">Live Partition Lanes & Crowd Pressure Telemetry</h3>
+            <h3 className="text-sm font-semibold text-slate-100">Elastic Autoscaling Partition Board</h3>
+            {lanes.length === 1 ? (
+              <span className="text-[10px] bg-slate-800 text-slate-300 border border-white/10 px-2 py-0.5 rounded font-mono font-medium">
+                1 Lane (Minimal Baseline)
+              </span>
+            ) : (
+              <span className="text-[10px] bg-teal-500/20 text-teal-300 border border-teal-500/40 px-2 py-0.5 rounded font-mono font-bold flex items-center gap-1 animate-pulse shadow-[0_0_8px_rgba(45,212,191,0.3)]">
+                <Flame className="w-3 h-3 text-teal-300" />
+                Elastic Surge: {lanes.length} Lanes Active
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-400 mt-0.5">
-            Striped database partition state across {lanes.length} live lanes with real-time wait & throughput observability.
+            Dynamically scales out on occupancy (&gt;25%, &gt;50%, &gt;75%, &gt;90%) or queue surge; scales in smoothly after 30s idle.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-teal-400 font-medium flex items-center gap-1.5 bg-teal-950/40 px-3 py-1 rounded-full border border-teal-500/30 font-mono">
+        <div className="flex items-center gap-2 font-mono">
+          <span className="text-xs text-teal-400 font-medium flex items-center gap-1.5 bg-teal-950/40 px-3 py-1 rounded-full border border-teal-500/30">
             <span className="w-2 h-2 rounded-full bg-teal-400 animate-pulse" />
-            {totalThroughput > 0 ? `${totalThroughput} req/s throughput` : "Live Sync Active"}
+            {totalThroughput > 0 ? `${totalThroughput} req/s throughput` : "Autoscaler Ready"}
           </span>
         </div>
       </div>
@@ -213,7 +248,7 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
             {totalSeated} <span className="text-xs text-slate-500 font-normal">/ {totalCapacity}</span>
           </div>
           <span className="text-[10px] text-teal-400">
-            {totalCapacity > 0 ? Math.round((totalSeated / totalCapacity) * 100) : 0}% saturation
+            {saturationPct}% capacity ({lanes.length} {lanes.length === 1 ? "lane" : "lanes"})
           </span>
         </div>
 
@@ -240,11 +275,11 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
           <div className="text-lg font-bold text-emerald-400 mt-0.5">
             {totalHeadroom} <span className="text-xs text-slate-500 font-normal">seats</span>
           </div>
-          <span className="text-[10px] text-slate-400">{lanes.length} active lanes</span>
+          <span className="text-[10px] text-slate-400">{lanes.length} active {lanes.length === 1 ? "lane" : "lanes"}</span>
         </div>
 
         <div className="bg-black/30 border border-white/5 rounded-lg p-3">
-          <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Lane Ingress</span>
+          <span className="text-[10px] text-slate-400 uppercase tracking-wider block">Active Ingress</span>
           <div className="text-lg font-bold text-teal-300 mt-0.5">
             Lane {optimalLane}
           </div>
@@ -257,9 +292,9 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
         <div className="flex items-center justify-between">
           <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 font-mono flex items-center gap-1.5">
             <Activity className="w-3.5 h-3.5 text-teal-400" />
-            Live Lane State Matrix
+            Live Lane State Matrix ({lanes.length} {lanes.length === 1 ? "Lane Active" : "Lanes Active"})
           </span>
-          <span className="text-[10px] text-slate-500 font-mono">Updates live on every state transition</span>
+          <span className="text-[10px] text-slate-500 font-mono">Autoscaling 1 → 16 Lanes dynamically</span>
         </div>
 
         <div className="overflow-x-auto rounded-lg border border-white/10 bg-black/40">
@@ -282,12 +317,19 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
                 const headroom = Math.max(0, lane.capacity - lane.seats_taken);
                 const isOptimal = lane.lane_index === optimalLane;
                 const isFull = headroom === 0;
+                const isNewlyScaled = newlyScaledLanes.has(lane.lane_index);
 
                 return (
                   <tr
                     key={lane.lane_index}
-                    className={`hover:bg-white/[0.04] transition-colors ${
-                      isOptimal && headroom > 0 ? "bg-teal-950/20" : isFull ? "bg-rose-950/10" : ""
+                    className={`hover:bg-white/[0.04] transition-all duration-300 ${
+                      isNewlyScaled
+                        ? "bg-teal-950/40 ring-1 ring-teal-400/40 animate-pulse"
+                        : isOptimal && headroom > 0
+                        ? "bg-teal-950/20"
+                        : isFull
+                        ? "bg-rose-950/10"
+                        : ""
                     }`}
                   >
                     <td className="py-2 px-3 font-semibold flex items-center gap-2">
@@ -297,7 +339,13 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
                         }`}
                       />
                       <span className="text-white">Lane {lane.lane_index}</span>
-                      {isOptimal && headroom > 0 && (
+                      {isNewlyScaled && (
+                        <span className="text-[9px] bg-gradient-to-r from-teal-500/30 to-emerald-500/30 text-teal-300 border border-teal-400/50 px-2 py-0.5 rounded-full font-bold uppercase tracking-wider animate-pulse flex items-center gap-1 shadow-[0_0_8px_rgba(45,212,191,0.5)]">
+                          <Sparkles className="w-2.5 h-2.5 text-teal-300" />
+                          SCALING OUT
+                        </span>
+                      )}
+                      {!isNewlyScaled && isOptimal && headroom > 0 && (
                         <span className="text-[9px] bg-teal-500/20 text-teal-300 border border-teal-500/40 px-1 rounded font-normal">
                           OPTIMAL
                         </span>
@@ -382,17 +430,23 @@ export function PartitionBoard({ eventId }: { eventId: string }) {
         </div>
       )}
 
-      {/* Saturation Progress Bars */}
+      {/* Saturation Progress Bars with Elastic Dynamic Expansion */}
       <div className="space-y-3 pt-1">
         {lanes.map((lane) => {
           const headroom = Math.max(0, lane.capacity - lane.seats_taken);
           const pct = Math.min(100, Math.round((lane.seats_taken / (lane.capacity || 1)) * 100));
+          const isNewlyScaled = newlyScaledLanes.has(lane.lane_index);
 
           return (
-            <div key={lane.lane_index} className="space-y-1">
+            <div key={lane.lane_index} className="space-y-1 transition-all duration-300">
               <div className="flex items-center justify-between text-xs font-mono">
-                <span className="text-slate-300 font-semibold">
-                  Lane {lane.lane_index} Saturation ({lane.seats_taken}/{lane.capacity})
+                <span className="text-slate-300 font-semibold flex items-center gap-2">
+                  <span>Lane {lane.lane_index} Saturation ({lane.seats_taken}/{lane.capacity})</span>
+                  {isNewlyScaled && (
+                    <span className="text-[9px] bg-teal-500/30 text-teal-300 border border-teal-400/50 px-1.5 py-0.2 rounded font-bold uppercase animate-pulse">
+                      NEW LANE
+                    </span>
+                  )}
                 </span>
                 <span className={pct >= 100 ? "text-rose-400 font-bold" : "text-teal-400"}>
                   {pct}% capacity · {headroom} free

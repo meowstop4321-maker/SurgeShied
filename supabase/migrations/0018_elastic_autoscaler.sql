@@ -1,4 +1,4 @@
--- Migration 0017: True Elastic Autoscaling Surge Partitions
+-- Migration 0018: True Elastic Autoscaling Surge Partitions
 --
 -- Start with 1 lane (minimal resource usage).
 -- Dynamically scale out under occupancy, queue pressure, or throughput surges.
